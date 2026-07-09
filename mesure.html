@@ -119,9 +119,13 @@
   </table>
 
   <div class="btns">
-    <button class="act ghost" id="btnReset">Tout effacer</button>
-    <button class="act ghost" id="btnExport">Exporter les niveaux</button>
+    <button class="act primary" id="btnFieldAR">Voir le champ en AR</button>
   </div>
+  <div class="btns">
+    <button class="act ghost" id="btnReset">Tout effacer</button>
+    <button class="act ghost" id="btnExport">Exporter CSV</button>
+  </div>
+  <div id="arExportHost"></div>
 
   <div class="note" id="calibNote">
     <strong>Mesure relative.</strong> Le micro de l'iPhone n'est pas calibré en absolu : les valeurs servent à comparer les points entre eux (répartition, direction de rayonnement), pas à fournir un niveau de puissance certifié ISO 3744. Le gain automatique est désactivé au mieux ; garde une distance micro-source constante entre les points.
@@ -363,6 +367,7 @@ document.getElementById('btnReset').onclick=()=>{
   if(!confirm('Effacer toutes les mesures ?')) return;
   for(let i=0;i<10;i++) levels[i]=null; current=0; recolor(); syncCurrent();
 };
+document.getElementById('btnFieldAR').onclick=exportFieldAR;
 document.getElementById('btnExport').onclick=()=>{
   const rows=[['point','hauteur_m','x_r','y_r','z_r','niveau_dBA_relatif']];
   POS.forEach((p,i)=>rows.push([i+1,(p[2]*R).toFixed(3),p[0],p[1],p[2],levels[i]===null?'':levels[i].toFixed(2)]));
@@ -372,19 +377,172 @@ document.getElementById('btnExport').onclick=()=>{
   a.download='mesures_iso3744.csv'; a.click();
 };
 
-// ---------- WebXR AR ----------
-const btnAR=document.getElementById('btnAR');
-if(navigator.xr){
-  navigator.xr.isSessionSupported('immersive-ar').then(ok=>{ if(!ok) btnAR.textContent='AR indispo'; });
-} else btnAR.textContent='AR indispo';
-btnAR.onclick=async()=>{
-  if(!navigator.xr){ alert("La réalité augmentée WebXR n'est pas disponible sur ce navigateur. Sur iPhone, utilise Chrome (WebXR Viewer) ou consulte la carte 3D ci-dessus."); return; }
-  try{
-    const session=await navigator.xr.requestSession('immersive-ar',{requiredFeatures:['hit-test','local-floor']});
-    renderer.xr.enabled=true; await renderer.xr.setSession(session);
-    dome.scale.set(1,1,1);
-  }catch(e){ alert('AR non lancée : '+e.message); }
-};
+// Bouton AR de l'aperçu : génère le champ coloré en USDZ (AR Quick Look natif)
+document.getElementById('btnAR').onclick=exportFieldAR;
+
+// ====== Génération USDZ client-side (champ coloré) ======
+// USDZ = ZIP non-compressé (STORE) contenant un seul .usda texte.
+// On réutilise POS, levels, ramp() déjà définis dans la page.
+
+// --- construit la géométrie hémisphère (mêmes params que le proto validé) ---
+function buildDome(SL, ST, R){
+  const verts=[], faces=[];
+  for(let j=0;j<=ST;j++){
+    const th=(Math.PI/2)*j/ST;
+    for(let i=0;i<=SL;i++){
+      const ph=2*Math.PI*i/SL;
+      verts.push([R*Math.cos(th)*Math.cos(ph), R*Math.sin(th), R*Math.cos(th)*Math.sin(ph)]);
+    }
+  }
+  for(let j=0;j<ST;j++){
+    for(let i=0;i<SL;i++){
+      const a=j*(SL+1)+i, b=j*(SL+1)+i+1, c=(j+1)*(SL+1)+i+1, d=(j+1)*(SL+1)+i;
+      faces.push([a,b,c],[a,c,d]);
+    }
+  }
+  return {verts, faces};
+}
+
+function isoToUsd(p,R){ return [p[0]*R, p[2]*R, p[1]*R]; }
+
+function fieldColorsFor(verts){
+  const known = levels.map((v,i)=>({v,pos:isoToUsd(POS[i],1.0)})).filter(o=>o.v!==null);
+  if(known.length===0) return null;
+  let lo=Infinity,hi=-Infinity; known.forEach(o=>{lo=Math.min(lo,o.v);hi=Math.max(hi,o.v);});
+  const span=(hi-lo)||1;
+  return verts.map(v=>{
+    let num=0,den=0,exact=null;
+    for(const o of known){
+      const dx=v[0]-o.pos[0], dy=v[1]-o.pos[1], dz=v[2]-o.pos[2];
+      const d2=dx*dx+dy*dy+dz*dz;
+      if(d2<1e-5){exact=o.v;break;}
+      const w=1/(d2*d2); num+=w*o.v; den+=w;
+    }
+    const val = exact!==null?exact:num/den;
+    return ramp((val-lo)/span);
+  });
+}
+
+function f(n){ // format float compact comme USD
+  if(!isFinite(n)) return "0";
+  return (Math.round(n*1e6)/1e6).toString();
+}
+
+function buildUSDA(){
+  const R=1.0;
+  const {verts,faces}=buildDome(48,24,R);
+  const colors=fieldColorsFor(verts);
+  if(!colors) return null;
+  const known=levels.map((v,i)=>({v,i})).filter(o=>o.v!==null);
+  let lo=Infinity,hi=-Infinity; known.forEach(o=>{lo=Math.min(lo,o.v);hi=Math.max(hi,o.v);});
+  const span=(hi-lo)||1;
+
+  let s='#usda 1.0\n(\n    defaultPrim = "Root"\n    metersPerUnit = 1\n    upAxis = "Y"\n)\n\n';
+  s+='def Xform "Root" (\n    prepend apiSchemas = ["Preliminary_AnchoringAPI"]\n)\n{\n';
+  s+='    token preliminary:anchoring:type = "plane"\n    token preliminary:planeAnchoring:alignment = "horizontal"\n\n';
+  // Mesh
+  s+='    def Mesh "Field"\n    {\n';
+  s+='        uniform bool doubleSided = 1\n';
+  s+='        float3[] extent = [(-1, 0, -1), (1, 1, 1)]\n';
+  s+='        int[] faceVertexCounts = ['+faces.map(()=>3).join(', ')+']\n';
+  s+='        int[] faceVertexIndices = ['+faces.flat().join(', ')+']\n';
+  s+='        point3f[] points = ['+verts.map(v=>`(${f(v[0])}, ${f(v[1])}, ${f(v[2])})`).join(', ')+']\n';
+  s+='        color3f[] primvars:displayColor = ['+colors.map(c=>`(${f(c[0])}, ${f(c[1])}, ${f(c[2])})`).join(', ')+'] (\n            interpolation = "vertex"\n        )\n';
+  s+='        float[] primvars:displayOpacity = [0.55] (\n            interpolation = "constant"\n        )\n';
+  s+='        uniform token subdivisionScheme = "none"\n    }\n\n';
+  // Centre
+  s+='    def Cylinder "Center"\n    {\n        uniform token axis = "Y"\n        double height = 0.004\n        double radius = 0.05\n        color3f[] primvars:displayColor = [(0.937, 0.2, 0.275)] (interpolation = "constant")\n        double3 xformOp:translate = (0, 0.002, 0)\n        uniform token[] xformOpOrder = ["xformOp:translate"]\n    }\n\n';
+  // Points
+  POS.forEach((p,idx)=>{
+    const pos=isoToUsd(p,R);
+    let c=[0.55,0.6,0.66];
+    if(levels[idx]!==null) c=ramp((levels[idx]-lo)/span);
+    s+=`    def Sphere "P${idx+1}"\n    {\n`;
+    s+='        float3[] extent = [(-0.03, -0.03, -0.03), (0.03, 0.03, 0.03)]\n';
+    s+=`        color3f[] primvars:displayColor = [(${f(c[0])}, ${f(c[1])}, ${f(c[2])})] (interpolation = "constant")\n`;
+    s+='        double radius = 0.03\n';
+    s+=`        double3 xformOp:translate = (${f(pos[0])}, ${f(pos[1])}, ${f(pos[2])})\n`;
+    s+='        uniform token[] xformOpOrder = ["xformOp:translate"]\n    }\n\n';
+  });
+  s+='}\n';
+  return s;
+}
+
+// --- ZIP STORE (aligné 64 octets) : USDZ ---
+function crc32(bytes){
+  let c, crc=0xFFFFFFFF;
+  if(!crc32.t){ crc32.t=[]; for(let n=0;n<256;n++){ c=n; for(let k=0;k<8;k++) c=c&1?0xEDB88320^(c>>>1):c>>>1; crc32.t[n]=c; } }
+  for(let i=0;i<bytes.length;i++) crc=crc32.t[(crc^bytes[i])&0xFF]^(crc>>>8);
+  return (crc^0xFFFFFFFF)>>>0;
+}
+function makeUSDZ(usda){
+  const enc=new TextEncoder();
+  const name='scene.usda';
+  const nameB=enc.encode(name);
+  const data=enc.encode(usda);
+  const crc=crc32(data);
+  // local file header
+  const parts=[];
+  function u16(v){return [v&255,(v>>8)&255];}
+  function u32(v){return [v&255,(v>>8)&255,(v>>16)&255,(v>>24)&255];}
+  // On calcule le padding pour aligner le DÉBUT des données sur 64 octets (requis USDZ)
+  const localHeaderLen=30+nameB.length;
+  const pad=(64-(localHeaderLen%64))%64;
+  const extra=new Uint8Array(pad); // extra field sert de padding
+  const lfh=[]
+    .concat(u32(0x04034b50), u16(20), u16(0), u16(0), u16(0), u16(0),
+            u32(crc), u32(data.length), u32(data.length),
+            u16(nameB.length), u16(pad));
+  const lfhArr=new Uint8Array(lfh);
+  const localOffset=0;
+  parts.push(lfhArr, nameB, extra, data);
+  // central directory
+  const cdh=[]
+    .concat(u32(0x02014b50), u16(20), u16(20), u16(0), u16(0), u16(0), u16(0),
+            u32(crc), u32(data.length), u32(data.length),
+            u16(nameB.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(localOffset));
+  const cdhArr=new Uint8Array(cdh);
+  const cdStart=lfhArr.length+nameB.length+extra.length+data.length;
+  const cdParts=[cdhArr, nameB];
+  const cdLen=cdhArr.length+nameB.length;
+  // EOCD
+  const eocd=[]
+    .concat(u32(0x06054b50), u16(0), u16(0), u16(1), u16(1),
+            u32(cdLen), u32(cdStart), u16(0));
+  const eocdArr=new Uint8Array(eocd);
+  // concat
+  let total=0; [...parts, ...cdParts, eocdArr].forEach(a=>total+=a.length);
+  const out=new Uint8Array(total); let off=0;
+  [...parts, ...cdParts, eocdArr].forEach(a=>{out.set(a,off); off+=a.length;});
+  return out;
+}
+
+function exportFieldAR(){
+  const measured=levels.filter(v=>v!==null).length;
+  if(measured<3){ alert('Mesure au moins 3 points pour générer le champ en AR.'); return; }
+  const usda=buildUSDA();
+  const usdz=makeUSDZ(usda);
+  const blob=new Blob([usdz], {type:'model/vnd.usdz+zip'});
+  const url=URL.createObjectURL(blob);
+  // Tentative 1 : lien rel="ar" avec img enfant -> AR Quick Look direct
+  const a=document.createElement('a');
+  a.setAttribute('rel','ar');
+  a.href=url;
+  const img=document.createElement('img');
+  img.src='badge-cible.png'; img.style.display='none';
+  a.appendChild(img);
+  document.body.appendChild(a);
+  a.click();
+  // Fallback : proposer le téléchargement si Quick Look ne s'ouvre pas
+  setTimeout(()=>{
+    const dl=document.createElement('a');
+    dl.href=url; dl.download='champ_acoustique.usdz';
+    dl.textContent='Télécharger le champ (USDZ)';
+    dl.className='act ghost'; dl.style.display='block'; dl.style.marginTop='10px'; dl.style.textAlign='center'; dl.style.padding='12px';
+    const host=document.getElementById('arExportHost');
+    if(host){ host.innerHTML=''; host.appendChild(dl); }
+  }, 800);
+}
 
 renderTable(); syncCurrent();
 </script>
