@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Demi-sphère ISO 3744 — AR natif (sans marqueur)</title>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.169.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.169.0/examples/jsm/"
+      }
+    }
+  </script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #0b0d12; color: #e8ecf3; font-family: -apple-system, system-ui, sans-serif; }
+    #preview { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; touch-action: none; }
+    #topbar {
+      position: fixed; top: calc(8px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%);
+      z-index: 5; font-size: 13px; color: #cdd5e0; background: rgba(10,12,18,.6); padding: 7px 14px; border-radius: 18px;
+      text-align: center; max-width: 92%;
+    }
+    #hud {
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
+      background: linear-gradient(to top, rgba(10,12,18,.94), rgba(10,12,18,.7));
+      padding: 12px 14px calc(14px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 11px;
+    }
+    .row { display: flex; align-items: center; gap: 10px; }
+    .row label { font-size: 12px; color: #9aa4b2; width: 84px; flex: none; }
+    .row input[type=range] { flex: 1; }
+    .val { font-size: 13px; color: #e8ecf3; width: 52px; text-align: right; flex: none; font-variant-numeric: tabular-nums; }
+    #arLink {
+      display: block; text-decoration: none; margin-top: 2px; border-radius: 14px; overflow: hidden;
+      opacity: .5; pointer-events: none; transition: opacity .2s;
+    }
+    #arLink.ready { opacity: 1; pointer-events: auto; }
+    #arImg { display: block; width: 100%; height: auto; }
+    #arStatus { font-size: 12px; text-align: center; color: #9aa4b2; min-height: 14px; }
+    #dl { font-size: 12px; text-align: center; color: #5b7cff; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <canvas id="preview"></canvas>
+  <div id="topbar">Règle rayon &amp; rotation, puis tape « Voir en réalité augmentée ». Sur iPhone : balaie lentement le sol pour l'ancrage.</div>
+
+  <div id="hud">
+    <div class="row">
+      <label>Rayon</label>
+      <input type="range" id="rad" min="0.5" max="3" step="0.05" value="1" />
+      <span class="val" id="radVal">1.00 m</span>
+    </div>
+    <div class="row">
+      <label>Rotation</label>
+      <input type="range" id="rot" min="0" max="360" step="1" value="0" />
+      <span class="val" id="rotVal">0°</span>
+    </div>
+    <a id="arLink" rel="ar" href="#"><img id="arImg" alt="Voir en réalité augmentée" /></a>
+    <div id="arStatus">Génération du modèle AR…</div>
+    <a id="dl" href="#" download="demi-sphere-3744.usdz" style="display:none">Le modèle ne s'ouvre pas ? Télécharger le .usdz</a>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { USDZExporter } from 'three/addons/exporters/USDZExporter.js';
+
+    // ---- 10 positions micro ISO 3744 : (x/r, y/r, z/r), z = vertical ----
+    const ISO3744 = [
+      [-0.99, 0.00, 0.15], [0.50, -0.86, 0.15], [0.50, 0.86, 0.15],
+      [-0.45, 0.77, 0.45], [-0.45, -0.77, 0.45], [0.89, 0.00, 0.45],
+      [0.33, 0.57, 0.75], [-0.66, 0.00, 0.75], [0.33, -0.57, 0.75], [0.00, 0.00, 1.00],
+    ];
+
+    const BLUE = 0x2f6df6, RED = 0xff3b30, YEL = 0xffcc00;
+    let radius = 1.0, rotDeg = 0;
+
+    // Matériaux (MeshStandardMaterial + emissive pour être visibles sous Quick Look)
+    const matStruct = new THREE.MeshStandardMaterial({ color: BLUE, emissive: BLUE, emissiveIntensity: 0.35, roughness: 0.6, metalness: 0 });
+    const matMic = new THREE.MeshStandardMaterial({ color: RED, emissive: RED, emissiveIntensity: 0.55, roughness: 0.4, metalness: 0 });
+    const matCenter = new THREE.MeshStandardMaterial({ color: YEL, emissive: YEL, emissiveIntensity: 0.7, roughness: 0.5, metalness: 0 });
+
+    const numTextures = ISO3744.map((_, i) => makeNumberTexture(i + 1));
+    function makeNumberTexture(n) {
+      const c = document.createElement('canvas'); c.width = c.height = 128;
+      const x = c.getContext('2d');
+      x.fillStyle = '#0b0d12'; x.beginPath(); x.arc(64, 64, 62, 0, Math.PI * 2); x.fill();
+      x.lineWidth = 8; x.strokeStyle = '#ffcc00'; x.beginPath(); x.arc(64, 64, 58, 0, Math.PI * 2); x.stroke();
+      x.fillStyle = '#fff'; x.font = 'bold 72px sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle';
+      x.fillText(String(n), 64, 70);
+      const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+      return t;
+    }
+
+    // Cylindre fin entre 2 points (les "lignes" USDZ doivent être des meshes)
+    function tube(p1, p2, r, mat) {
+      const dir = new THREE.Vector3().subVectors(p2, p1);
+      const len = dir.length();
+      const geo = new THREE.CylinderGeometry(r, r, len, 10);
+      const m = new THREE.Mesh(geo, mat);
+      m.position.copy(p1).add(p2).multiplyScalar(0.5);
+      m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
+      return m;
+    }
+
+    // Construit le groupe demi-sphère (unités = mètres). Reconstruit à chaque réglage.
+    let hemi = new THREE.Group();
+    function buildHemi() {
+      // dispose ancien
+      hemi.traverse(o => { if (o.geometry) o.geometry.dispose(); });
+      hemi.clear();
+      const r = radius, rad = rotDeg * Math.PI / 180, cos = Math.cos(rad), sin = Math.sin(rad);
+      const tubeR = Math.max(0.004, r * 0.006);
+
+      // Cercle au sol (empreinte de la sphère)
+      const ground = new THREE.Mesh(new THREE.TorusGeometry(r, tubeR, 8, 72), matStruct);
+      ground.rotation.x = Math.PI / 2; hemi.add(ground);
+      // Parallèle à mi-hauteur (cage)
+      const yMid = r * 0.5, rMid = Math.sqrt(Math.max(0, r * r - yMid * yMid));
+      const par = new THREE.Mesh(new THREE.TorusGeometry(rMid, tubeR, 8, 64), matStruct);
+      par.rotation.x = Math.PI / 2; par.position.y = yMid; hemi.add(par);
+      // 2 méridiens (demi-cercles verticaux)
+      for (const a of [0, Math.PI / 2]) {
+        const mer = new THREE.Mesh(new THREE.TorusGeometry(r, tubeR, 8, 48, Math.PI), matStruct);
+        mer.rotation.y = a; hemi.add(mer);
+      }
+
+      // Disque de référence au sol (centre)
+      const disc = new THREE.Mesh(new THREE.CircleGeometry(Math.max(0.04, r * 0.05), 40), matCenter);
+      disc.rotation.x = -Math.PI / 2; disc.position.y = 0.002; hemi.add(disc);
+
+      // Micros + rayons + numéros
+      ISO3744.forEach(([ix, iy, iz], i) => {
+        const rx = ix * cos - iy * sin, ry = ix * sin + iy * cos;
+        const pos = new THREE.Vector3(rx * r, iz * r, ry * r);
+        // rayon (spoke) du centre au micro
+        hemi.add(tube(new THREE.Vector3(0, 0, 0), pos, tubeR * 0.8, matStruct));
+        // micro
+        const mic = new THREE.Mesh(new THREE.SphereGeometry(Math.max(0.03, r * 0.045), 20, 16), matMic);
+        mic.position.copy(pos); hemi.add(mic);
+        // plaque numérotée, orientée radialement vers l'extérieur
+        const s = Math.max(0.08, r * 0.11);
+        const plaque = new THREE.Mesh(
+          new THREE.PlaneGeometry(s, s),
+          new THREE.MeshStandardMaterial({ map: numTextures[i], emissive: 0xffffff, emissiveMap: numTextures[i], emissiveIntensity: 0.9, roughness: 1, side: THREE.DoubleSide })
+        );
+        const out = new THREE.Vector3(rx, 0, ry);
+        if (out.lengthSq() < 1e-6) out.set(0, 0, 1);
+        out.normalize();
+        plaque.position.copy(pos).addScaledVector(out, s * 0.7).add(new THREE.Vector3(0, s * 0.6, 0));
+        plaque.lookAt(plaque.position.clone().add(out));
+        hemi.add(plaque);
+      });
+      hemi.updateMatrixWorld(true);
+    }
+
+    // ---------- Prévisualisation 3D ----------
+    const canvas = document.getElementById('preview');
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0b0d12);
+    const cam = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.01, 100);
+    cam.position.set(2.2, 1.7, 2.2);
+    const controls = new OrbitControls(cam, canvas);
+    controls.enableDamping = true; controls.target.set(0, 0.4, 0);
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 1.4));
+    const dir = new THREE.DirectionalLight(0xffffff, 1.2); dir.position.set(3, 5, 2); scene.add(dir);
+    const grid = new THREE.GridHelper(6, 24, 0x2a3446, 0x1b2230); scene.add(grid);
+    scene.add(hemi);
+
+    addEventListener('resize', () => {
+      cam.aspect = innerWidth / innerHeight; cam.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+    (function loop() { requestAnimationFrame(loop); controls.update(); renderer.render(scene, cam); })();
+
+    // ---------- Génération USDZ + lien AR ----------
+    const arLink = document.getElementById('arLink');
+    const arImg = document.getElementById('arImg');
+    const arStatus = document.getElementById('arStatus');
+    const dl = document.getElementById('dl');
+    arImg.src = makeButtonImage();
+    let currentURL = null, genTimer = null, genToken = 0;
+
+    function makeButtonImage() {
+      const c = document.createElement('canvas'); c.width = 700; c.height = 150;
+      const x = c.getContext('2d');
+      const g = x.createLinearGradient(0, 0, 700, 0); g.addColorStop(0, '#2f6df6'); g.addColorStop(1, '#4b8bff');
+      x.fillStyle = g; roundRect(x, 0, 0, 700, 150, 22); x.fill();
+      x.fillStyle = '#fff'; x.font = 'bold 44px -apple-system, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle';
+      x.fillText('▸  Voir en réalité augmentée', 350, 78);
+      return c.toDataURL('image/png');
+    }
+    function roundRect(x, a, b, w, h, r) { x.beginPath(); x.moveTo(a + r, b); x.arcTo(a + w, b, a + w, b + h, r); x.arcTo(a + w, b + h, a, b + h, r); x.arcTo(a, b + h, a, b, r); x.arcTo(a, b, a + w, b, r); x.closePath(); }
+
+    async function regenerate() {
+      const token = ++genToken;
+      arLink.classList.remove('ready');
+      arStatus.textContent = 'Génération du modèle AR…';
+      buildHemi();
+      try {
+        const exportScene = new THREE.Scene();
+        exportScene.add(hemi.clone(true));
+        const exporter = new USDZExporter();
+        const out = await exporter.parseAsync(exportScene, { quickLookCompatible: true });
+        if (token !== genToken) return; // un réglage plus récent est arrivé
+        const blob = new Blob([out], { type: 'model/vnd.usdz+zip' });
+        if (currentURL) URL.revokeObjectURL(currentURL);
+        currentURL = URL.createObjectURL(blob);
+        arLink.setAttribute('href', currentURL + '#allowsContentScaling=0');
+        dl.setAttribute('href', currentURL); dl.style.display = 'block';
+        arLink.classList.add('ready');
+        arStatus.textContent = 'Modèle AR prêt (rayon ' + radius.toFixed(2) + ' m · rotation ' + rotDeg + '°)';
+      } catch (e) {
+        arStatus.textContent = 'Erreur génération USDZ : ' + e.message;
+      }
+    }
+    function scheduleRegen() { clearTimeout(genTimer); genTimer = setTimeout(regenerate, 250); }
+
+    // ---------- Contrôles ----------
+    const radEl = document.getElementById('rad'), radVal = document.getElementById('radVal');
+    const rotEl = document.getElementById('rot'), rotVal = document.getElementById('rotVal');
+    radEl.addEventListener('input', () => { radius = +radEl.value; radVal.textContent = radius.toFixed(2) + ' m'; buildHemi(); scheduleRegen(); });
+    rotEl.addEventListener('input', () => { rotDeg = +rotEl.value; rotVal.textContent = rotDeg + '°'; buildHemi(); scheduleRegen(); });
+
+    buildHemi();
+    regenerate();
+  </script>
+</body>
+</html>

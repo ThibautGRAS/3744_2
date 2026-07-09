@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ISO 3744 — Surfaces de mesure AR · CETIM</title>
+<style>
+  :root{
+    --navy:#001E50; --red:#EF3346; --cyan:#E1F6F9; --rose:#FCD9E0;
+    --grey:#C1C7C6; --bg:#F4F6F9; --white:#FFFFFF;
+    --chart-blue:#1F6FE0; --chart-orange:#F08A24; --chart-green:#1F9D57;
+  }
+  *{box-sizing:border-box;margin:0}
+  body{
+    background:var(--bg); color:var(--navy);
+    font:16px/1.5 "Arial Nova", Arimo, Arial, Helvetica, sans-serif;
+    min-height:100svh; padding:0 0 44px; display:flex; flex-direction:column; align-items:center;
+  }
+  header{
+    width:100%; background:var(--white); border-bottom:3px solid var(--red);
+    padding:18px 20px 14px; display:flex; justify-content:center;
+  }
+  header img{height:34px; width:auto; display:block}
+  main{max-width:480px; width:100%; padding:24px 20px 0}
+  .options{background:var(--white); border:2px solid var(--navy); border-radius:4px;
+    box-shadow:0 2px 6px rgba(0,30,80,.10); margin-bottom:6px}
+  .opt{display:flex; align-items:center; gap:12px; padding:12px 15px}
+  .opt + .opt{border-top:1px solid var(--grey)}
+  .opt-txt{flex:1 1 auto; min-width:0; overflow-wrap:break-word}
+  .opt .sw{flex:0 0 51px}
+  .opt-txt strong{display:block; font-size:14px; font-weight:700}
+  .opt-txt span{display:block; color:#4a5a75; font-size:12px; margin-top:1px}
+  .sw{flex:none; width:51px; height:31px; border-radius:16px; border:none; padding:2px;
+    background:var(--grey); position:relative; cursor:pointer; transition:background .12s ease}
+  .sw .knob{display:block; width:27px; height:27px; border-radius:50%; background:var(--white);
+    box-shadow:0 1px 3px rgba(0,30,80,.35); transition:transform .12s ease}
+  .sw[aria-checked="true"]{background:var(--red)}
+  .sw[aria-checked="true"] .knob{transform:translateX(20px)}
+  .eyebrow{
+    font-size:11px; font-weight:700; letter-spacing:.18em; text-transform:uppercase;
+    color:var(--red);
+  }
+  h1{font-size:24px; font-weight:700; letter-spacing:-0.01em; margin:6px 0 4px}
+  p.sub{color:#4a5a75; font-size:14px; margin-bottom:24px}
+  h2{
+    font-size:11.5px; font-weight:700; letter-spacing:.14em; text-transform:uppercase;
+    color:var(--navy); margin:24px 0 10px; padding-bottom:5px; border-bottom:1px solid var(--grey);
+  }
+  a.cfg{
+    display:flex; align-items:center; gap:14px; text-decoration:none;
+    background:var(--white); border:2px solid var(--navy); border-radius:4px;
+    padding:13px 15px; margin-bottom:10px; color:var(--navy);
+    box-shadow:0 2px 6px rgba(0,30,80,.10);
+    transition:transform .08s ease, box-shadow .08s ease;
+  }
+  a.cfg:active{transform:translateY(1px); box-shadow:0 1px 3px rgba(0,30,80,.10)}
+  a.cfg img.dot{flex:none;width:40px;height:40px;border-radius:4px;display:block}
+  a.cfg .txt{flex:1; min-width:0}
+  a.cfg .txt strong{display:block; font-size:15px; font-weight:700}
+  a.cfg .txt span{display:block; color:#4a5a75; font-size:12.5px; margin-top:1px}
+  a.cfg .go{flex:none; color:var(--red); font-size:22px; font-weight:700}
+  .gestures{
+    display:flex; gap:8px; margin-top:24px;
+  }
+  .gestures div{
+    flex:1; background:var(--cyan); border:1px solid var(--navy);
+    border-radius:0 16px 0 0; padding:11px 9px; font-size:11.5px; color:#33507a; text-align:center;
+  }
+  .gestures strong{display:block; color:var(--navy); font-size:12.5px; margin-bottom:2px}
+  .lidar{
+    display:flex; gap:10px; align-items:flex-start; margin-top:12px;
+    background:var(--rose); border:1px solid var(--navy); border-radius:4px;
+    padding:11px 13px; font-size:12px; color:#33507a; line-height:1.45;
+  }
+  .lidar .chip{
+    flex:none; background:var(--navy); color:var(--white); font-weight:700;
+    font-size:10.5px; letter-spacing:.12em; padding:3px 8px; border-radius:3px; margin-top:1px;
+  }
+  .warn{margin-top:16px; font-size:12px; color:#5a6b85; text-align:center}
+  .legend{display:flex; justify-content:center; gap:16px; margin-top:12px; font-size:12px; color:#4a5a75}
+  .legend i{display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:5px; vertical-align:-1px}
+</style>
+</head>
+<body>
+<header><img src="cetim-logo.png" alt="CETIM — Institut Carnot"></header>
+<main>
+  <div class="eyebrow">ISO 3744:2010 · Réalité augmentée</div>
+  <h1>Surfaces de mesure acoustique</h1>
+  <p class="sub">Antennes microphoniques à l'échelle réelle, ancrées au sol. Chaque configuration ouvre directement la caméra — redimensionnable au pincement.</p>
+
+  <div class="options">
+    <div class="opt">
+      <div class="opt-txt"><strong>Mode technicien</strong>
+      <span>Fils à plomb, pastilles à marquer au sol et hauteurs de micro sur les étiquettes</span></div>
+      <button class="sw" id="swT" role="switch" aria-checked="false" onclick="tog(this)"><span class="knob"></span></button>
+    </div>
+    <div class="opt">
+      <div class="opt-txt"><strong>Ancrage cible imprimée</strong>
+      <span>Verrouille le modèle sur la feuille A4 posée au centre — zéro dérive, position répétable</span></div>
+      <button class="sw" id="swA" role="switch" aria-checked="false" onclick="tog(this)"><span class="knob"></span></button>
+    </div>
+  </div>
+
+  <a class="cfg" id="dlTarget" href="cible-ancrage.pdf" download style="display:none">
+    <img class="dot" src="badge-cible.png" alt="PDF">
+    <span class="txt"><strong>Imprimer la cible d'ancrage (PDF A4)</strong>
+    <span>Échelle 100 % impérative — vérifier 160 mm au réglet · croix = centre source</span></span>
+    <span class="go">↓</span>
+  </a>
+
+  <h2>Hémisphère r = 1 m — Table B.2 · large bande</h2>
+  <a class="cfg" rel="ar" data-base="hemi-b2-10" href="hemi-b2-10.usdz">
+    <img class="dot" src="badge-10.png" alt="10">
+    <span class="txt"><strong>Antenne clé — 10 positions</strong>
+    <span>Positions 1–10 · anneaux z/r = 0,15 · 0,45 · 0,75 + sommet</span></span>
+    <span class="go">›</span>
+  </a>
+  <a class="cfg" rel="ar" data-base="hemi-b2-20" href="hemi-b2-20.usdz">
+    <img class="dot" src="badge-20.png" alt="20">
+    <span class="txt"><strong>Antenne étendue — 20 positions</strong>
+    <span>+ positions 11–20 · le sommet porte 10 et 20</span></span>
+    <span class="go">›</span>
+  </a>
+
+  <h2>Hémisphère r = 1 m — Table B.1 · toutes sources</h2>
+  <a class="cfg" rel="ar" data-base="hemi-b1-10" href="hemi-b1-10.usdz">
+    <img class="dot" src="badge-10.png" alt="10">
+    <span class="txt"><strong>Antenne clé — 10 positions</strong>
+    <span>Répartition anti-interférences · sources tonales incluses</span></span>
+    <span class="go">›</span>
+  </a>
+  <a class="cfg" rel="ar" data-base="hemi-b1-20" href="hemi-b1-20.usdz">
+    <img class="dot" src="badge-20.png" alt="20">
+    <span class="txt"><strong>Antenne étendue — 20 positions</strong>
+    <span>+ positions 11–20</span></span>
+    <span class="go">›</span>
+  </a>
+
+  <h2>Parallélépipède — Annexe C</h2>
+  <a class="cfg" rel="ar" data-base="para-9" href="para-9.usdz">
+    <img class="dot" src="badge-9.png" alt="9">
+    <span class="txt"><strong>9 positions clés — petite machine</strong>
+    <span>Boîte réf. 1×1×1 m · d = 1 m · surface 3×3×2 m</span></span>
+    <span class="go">›</span>
+  </a>
+
+  <div class="legend">
+    <span><i style="background:var(--red)"></i>Positions clés</span>
+    <span><i style="background:var(--chart-orange)"></i>Additionnelles</span>
+    <span><i style="background:#8a97a5"></i>Boîte de référence</span>
+  </div>
+
+  <div class="gestures">
+    <div><strong>Poser</strong>Balaye le sol, touche l'écran</div>
+    <div><strong>Déplacer</strong>Glisse à un doigt</div>
+    <div><strong>Tourner</strong>Pivote à deux doigts</div>
+  </div>
+
+  <div class="lidar">
+    <span class="chip">LiDAR</span>
+    <span>Détecté et utilisé automatiquement si l'appareil en dispose (iPhone Pro, iPad Pro) : pose du plan instantanée, ancrage renforcé et occlusion des objets réels. Sur les autres iPhone, le suivi caméra + centrale inertielle reste pleinement fonctionnel.</span>
+  </div>
+
+  <p class="warn">Ouvrir impérativement dans Safari ou Chrome iOS (pas depuis Teams, Outlook ou LinkedIn : leurs navigateurs intégrés affichent le fichier brut). Coordonnées : ISO 3744:2010, Tables B.1, B.2 et Annexe C. En mode ancré, le modèle apparaît sur la cible imprimée et ne se déplace plus (gestes désactivés) : viser la feuille avec la caméra.</p>
+</main>
+<script>
+function tog(el){
+  el.setAttribute('aria-checked', el.getAttribute('aria-checked')==='true' ? 'false' : 'true');
+  apply();
+}
+function apply(){
+  var t = document.getElementById('swT').getAttribute('aria-checked')==='true';
+  var a = document.getElementById('swA').getAttribute('aria-checked')==='true';
+  var suf = (t||a) ? '-' + (t?'ph':'') + (a?'a':'') : '';
+  // Pincement libre activé sur toutes les formes (pas de verrou d'échelle)
+  document.querySelectorAll('a.cfg[data-base]').forEach(function(el){
+    el.setAttribute('href', el.dataset.base + suf + '.usdz');
+  });
+  document.getElementById('dlTarget').style.display = a ? 'flex' : 'none';
+}
+apply();
+</script>
+</body>
+</html>

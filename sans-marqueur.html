@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Demi-sphère ISO 3744 — AR</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; font-family: -apple-system, system-ui, sans-serif; }
+    #video {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      object-fit: cover; z-index: 0;
+    }
+    #canvas { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
+    #crosshair {
+      position: fixed; top: 50%; left: 50%; width: 26px; height: 26px;
+      transform: translate(-50%, -50%); z-index: 2; pointer-events: none;
+      border: 2px solid rgba(255,255,255,.9); border-radius: 50%;
+      box-shadow: 0 0 0 1px rgba(0,0,0,.5), inset 0 0 0 1px rgba(0,0,0,.5);
+    }
+    #crosshair::after {
+      content: ''; position: absolute; top: 50%; left: 50%; width: 4px; height: 4px;
+      transform: translate(-50%,-50%); background: #fff; border-radius: 50%;
+    }
+
+    /* Panneau démarrage */
+    #start {
+      position: fixed; inset: 0; z-index: 10; background: #0b0d12;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 22px; padding: 28px; text-align: center; color: #e8ecf3;
+    }
+    #start h1 { font-size: 22px; font-weight: 700; }
+    #start p { font-size: 14px; line-height: 1.5; color: #9aa4b2; max-width: 340px; }
+    .btn {
+      background: #2f6df6; color: #fff; border: none; border-radius: 12px;
+      padding: 15px 26px; font-size: 17px; font-weight: 600; cursor: pointer;
+    }
+    .btn.secondary { background: #232936; color: #cdd5e0; }
+
+    /* HUD */
+    #hud {
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
+      background: linear-gradient(to top, rgba(10,12,18,.92), rgba(10,12,18,.72));
+      padding: 12px 14px calc(12px + env(safe-area-inset-bottom)); color: #e8ecf3;
+      display: none; flex-direction: column; gap: 10px;
+    }
+    #hud.show { display: flex; }
+    .row { display: flex; align-items: center; gap: 10px; }
+    .row label { font-size: 12px; color: #9aa4b2; width: 92px; flex: none; }
+    .row input[type=range] { flex: 1; }
+    .row input[type=number] {
+      width: 68px; background: #1a2130; color: #e8ecf3; border: 1px solid #2c3547;
+      border-radius: 8px; padding: 6px 8px; font-size: 14px;
+    }
+    .val { font-size: 13px; color: #cdd5e0; width: 56px; text-align: right; flex: none; }
+    .actions { display: flex; gap: 8px; }
+    .actions .btn { flex: 1; padding: 12px; font-size: 15px; border-radius: 10px; }
+    #hint {
+      position: fixed; top: calc(12px + env(safe-area-inset-top)); left: 50%;
+      transform: translateX(-50%); z-index: 5; color: #fff; font-size: 13px;
+      background: rgba(10,12,18,.7); padding: 8px 14px; border-radius: 20px;
+      display: none; max-width: 90%; text-align: center;
+    }
+    #hint.show { display: block; }
+  </style>
+</head>
+<body>
+  <video id="video" playsinline autoplay muted></video>
+  <canvas id="canvas"></canvas>
+  <div id="crosshair"></div>
+  <div id="hint"></div>
+
+  <div id="start">
+    <h1>Demi-sphère ISO 3744</h1>
+    <p>Visualisation AR des 10 positions micro (rayon 1&nbsp;m) sur le sol.
+       Autorise la caméra et les capteurs de mouvement, puis vise le sol et tape l'écran pour poser le centre.</p>
+    <button class="btn" id="startBtn">Démarrer</button>
+    <p style="font-size:12px">iPhone : ouvre cette page dans <b>Safari</b> (HTTPS via Netlify requis pour la caméra et les capteurs).</p>
+  </div>
+
+  <div id="hud">
+    <div class="row">
+      <label>Rotation Z</label>
+      <input type="range" id="rot" min="0" max="360" step="1" value="0" />
+      <span class="val" id="rotVal">0°</span>
+    </div>
+    <div class="row">
+      <label>Rayon (m)</label>
+      <input type="range" id="rad" min="0.5" max="3" step="0.05" value="1" />
+      <span class="val" id="radVal">1.00</span>
+    </div>
+    <div class="row">
+      <label>Hauteur tél. (m)</label>
+      <input type="number" id="height" min="0.5" max="2.2" step="0.05" value="1.40" />
+      <span class="val">œil / main</span>
+    </div>
+    <div class="actions">
+      <button class="btn secondary" id="placeBtn">Reposer au centre visé</button>
+      <button class="btn secondary" id="calibBtn">Caler le Nord</button>
+    </div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
+
+    // ---------- Coordonnées normalisées ISO 3744 : 10 micros (x/r, y/r, z/r) ----------
+    // z = vertical (haut). Multipliées par le rayon r.
+    const ISO3744 = [
+      [-0.99,  0.00, 0.15],
+      [ 0.50, -0.86, 0.15],
+      [ 0.50,  0.86, 0.15],
+      [-0.45,  0.77, 0.45],
+      [-0.45, -0.77, 0.45],
+      [ 0.89,  0.00, 0.45],
+      [ 0.33,  0.57, 0.75],
+      [-0.66,  0.00, 0.75],
+      [ 0.33, -0.57, 0.75],
+      [ 0.00,  0.00, 1.00],
+    ];
+
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const hud = document.getElementById('hud');
+    const hint = document.getElementById('hint');
+
+    let renderer, scene, camera;
+    let group;                 // groupe demi-sphère (positionné au sol)
+    let cameraHeight = 1.40;   // hauteur du téléphone au-dessus du sol (m)
+    let radius = 1.0;
+    let rotZ = 0;              // rotation autour de la verticale (deg)
+    let deviceQuat = new THREE.Quaternion();
+    let compassOffset = 0;     // décalage de calage "Nord"
+    let placed = false;
+
+    function showHint(txt, ms = 0) {
+      hint.textContent = txt; hint.classList.add('show');
+      if (ms) setTimeout(() => hint.classList.remove('show'), ms);
+    }
+
+    // ---------- Démarrage (geste utilisateur requis iOS) ----------
+    document.getElementById('startBtn').addEventListener('click', async () => {
+      try {
+        await requestOrientationPermission(); // DOIT être en 1er dans le geste (contrainte iOS)
+        await startCamera();
+        document.getElementById('start').style.display = 'none';
+        hud.classList.add('show');
+        initThree();
+        buildHemisphere();
+        placeReference();               // pose initiale devant l'utilisateur
+        showHint('Vise le sol et tape l\'écran pour poser le centre', 4000);
+        animate();
+      } catch (e) {
+        alert('Erreur : ' + e.message);
+      }
+    });
+
+    async function startCamera() {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+        audio: false,
+      });
+      video.srcObject = stream;
+      await video.play();
+    }
+
+    async function requestOrientationPermission() {
+      const D = window.DeviceOrientationEvent;
+      if (D && typeof D.requestPermission === 'function') {
+        const res = await D.requestPermission();
+        if (res !== 'granted') throw new Error('Capteurs de mouvement refusés');
+      }
+      window.addEventListener('deviceorientation', onOrientation, true);
+    }
+
+    // ---------- Conversion orientation appareil -> quaternion caméra ----------
+    const zee = new THREE.Vector3(0, 0, 1);
+    const euler = new THREE.Euler();
+    const q0 = new THREE.Quaternion();
+    const q1 = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5)); // -90° axe X
+    function onOrientation(e) {
+      if (e.alpha == null) return;
+      const alpha = THREE.MathUtils.degToRad(e.alpha + compassOffset);
+      const beta  = THREE.MathUtils.degToRad(e.beta);
+      const gamma = THREE.MathUtils.degToRad(e.gamma);
+      const orient = THREE.MathUtils.degToRad(window.screen?.orientation?.angle || 0);
+      euler.set(beta, alpha, -gamma, 'YXZ');
+      deviceQuat.setFromEuler(euler);
+      deviceQuat.multiply(q1);
+      deviceQuat.multiply(q0.setFromAxisAngle(zee, -orient));
+    }
+
+    // ---------- Three.js ----------
+    function initThree() {
+      renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.05, 100);
+      camera.position.set(0, cameraHeight, 0); // caméra fixe à hauteur téléphone, sol = y0
+      scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1.2));
+      window.addEventListener('resize', onResize);
+      canvas.addEventListener('click', placeReference);
+    }
+
+    function onResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    function buildHemisphere() {
+      if (group) scene.remove(group);
+      group = new THREE.Group();
+
+      // Dôme filaire de repère
+      const dome = new THREE.Mesh(
+        new THREE.SphereGeometry(1, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2),
+        new THREE.MeshBasicMaterial({ color: 0x2f6df6, wireframe: true, transparent: true, opacity: 0.25 })
+      );
+      dome.name = 'dome';
+      group.add(dome);
+
+      // Disque au sol + centre
+      const disc = new THREE.Mesh(
+        new THREE.RingGeometry(0.97, 1.0, 64),
+        new THREE.MeshBasicMaterial({ color: 0x2f6df6, side: THREE.DoubleSide })
+      );
+      disc.rotation.x = -Math.PI / 2;
+      disc.name = 'disc';
+      group.add(disc);
+
+      const center = new THREE.Mesh(
+        new THREE.SphereGeometry(0.03, 16, 16),
+        new THREE.MeshBasicMaterial({ color: 0xffcc00 })
+      );
+      group.add(center);
+
+      // Les 10 micros
+      const micGeo = new THREE.SphereGeometry(0.045, 16, 16);
+      const micMat = new THREE.MeshBasicMaterial({ color: 0xff3b30 });
+      ISO3744.forEach(([x, y, z], i) => {
+        const m = new THREE.Mesh(micGeo, micMat);
+        m.userData.iso = [x, y, z]; // stocke la position normalisée
+        m.name = 'mic' + (i + 1);
+        // étiquette numéro flottante
+        const label = makeLabel(String(i + 1));
+        label.userData.iso = [x, y, z];
+        label.userData.isLabel = true;
+        group.add(label);
+        // ligne vers le centre
+        const line = new THREE.Line(
+          new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(x, z, -y)]),
+          new THREE.LineBasicMaterial({ color: 0xff3b30, transparent: true, opacity: 0.4 })
+        );
+        line.userData.iso = [x, y, z];
+        group.add(line);
+        group.add(m);
+      });
+
+      scene.add(group);
+      applyGeometry();
+    }
+
+    // Crée une étiquette texte (sprite)
+    function makeLabel(text) {
+      const c = document.createElement('canvas');
+      c.width = c.height = 128;
+      const ctx = c.getContext('2d');
+      ctx.beginPath(); ctx.arc(64, 64, 58, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(10,12,18,.85)'; ctx.fill();
+      ctx.lineWidth = 6; ctx.strokeStyle = '#ffcc00'; ctx.stroke();
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 72px sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(text, 64, 68);
+      const tex = new THREE.CanvasTexture(c);
+      const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false }));
+      spr.scale.setScalar(0.18);
+      return spr;
+    }
+
+    // Applique rayon + rotation aux éléments
+    function applyGeometry() {
+      if (!group) return;
+      const rad = THREE.MathUtils.degToRad(rotZ);
+      const cos = Math.cos(rad), sin = Math.sin(rad);
+      group.children.forEach((obj) => {
+        const iso = obj.userData.iso;
+        if (obj.name === 'dome') { obj.scale.setScalar(radius); }
+        else if (obj.name === 'disc') { obj.scale.set(radius, radius, radius); }
+        else if (iso) {
+          // rotation autour de l'axe vertical (dans le plan x,y ISO)
+          const [x, y, z] = iso;
+          const xr = x * cos - y * sin;
+          const yr = x * sin + y * cos;
+          // repère Three : y = haut, on projette (xr, z*, -yr)
+          if (obj.isLine) {
+            obj.geometry.setFromPoints([new THREE.Vector3(), new THREE.Vector3(xr * radius, z * radius, -yr * radius)]);
+          } else if (obj.userData.isLabel) {
+            obj.position.set(xr * radius, z * radius + 0.12, -yr * radius);
+          } else {
+            obj.position.set(xr * radius, z * radius, -yr * radius);
+          }
+        }
+      });
+    }
+
+    // Pose le centre de la demi-sphère au point du sol visé par le viseur central
+    function placeReference() {
+      // Rayon depuis la caméra à travers le centre de l'écran
+      const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(deviceQuat).normalize();
+      // Intersection avec le plan y = 0 (sol)
+      const origin = camera.position.clone();
+      if (dir.y >= -0.001) {
+        showHint('Baisse le téléphone vers le sol puis retape', 2500);
+        return;
+      }
+      const t = -origin.y / dir.y;
+      const hit = origin.clone().add(dir.multiplyScalar(t));
+      group.position.set(hit.x, 0, hit.z);
+      placed = true;
+      hint.classList.remove('show');
+    }
+
+    // ---------- Contrôles HUD ----------
+    const rotEl = document.getElementById('rot');
+    const rotVal = document.getElementById('rotVal');
+    rotEl.addEventListener('input', () => { rotZ = +rotEl.value; rotVal.textContent = rotZ + '°'; applyGeometry(); });
+
+    const radEl = document.getElementById('rad');
+    const radVal = document.getElementById('radVal');
+    radEl.addEventListener('input', () => { radius = +radEl.value; radVal.textContent = radius.toFixed(2); applyGeometry(); });
+
+    const heightEl = document.getElementById('height');
+    heightEl.addEventListener('input', () => {
+      cameraHeight = +heightEl.value || 1.4;
+      if (camera) camera.position.y = cameraHeight;
+    });
+
+    document.getElementById('placeBtn').addEventListener('click', placeReference);
+    document.getElementById('calibBtn').addEventListener('click', () => {
+      // recale l'orientation courante comme référence "devant"
+      compassOffset -= 0; // le calage se fait en reposant le centre ; ici on repose simplement
+      placeReference();
+      showHint('Recalé', 1500);
+    });
+
+    function animate() {
+      requestAnimationFrame(animate);
+      if (deviceQuat) camera.quaternion.copy(deviceQuat);
+      renderer.render(scene, camera);
+    }
+  </script>
+</body>
+</html>

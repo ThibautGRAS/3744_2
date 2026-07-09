@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Demi-sphère ISO 3744 — AR marqueur</title>
+  <!-- A-Frame + AR.js (reconnaissance de marqueur, ancrage fixe dans l'espace) -->
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@ar-js-org/ar.js@3.4.5/aframe/build/aframe-ar.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { width: 100%; height: 100%; overflow: hidden; font-family: -apple-system, system-ui, sans-serif; }
+    #hud {
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+      background: linear-gradient(to top, rgba(10,12,18,.92), rgba(10,12,18,.7));
+      padding: 12px 14px calc(12px + env(safe-area-inset-bottom)); color: #e8ecf3;
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .row { display: flex; align-items: center; gap: 10px; }
+    .row label { font-size: 12px; color: #9aa4b2; width: 92px; flex: none; }
+    .row input[type=range] { flex: 1; }
+    .val { font-size: 13px; color: #cdd5e0; width: 56px; text-align: right; flex: none; }
+    #status {
+      position: fixed; top: calc(10px + env(safe-area-inset-top)); left: 50%;
+      transform: translateX(-50%); z-index: 20; color: #fff; font-size: 13px;
+      background: rgba(10,12,18,.7); padding: 8px 14px; border-radius: 20px; text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div id="status">Vise le marqueur Hiro posé au sol…</div>
+
+  <a-scene
+    vr-mode-ui="enabled: false"
+    renderer="antialias: true; alpha: true; logarithmicDepthBuffer: true;"
+    arjs="sourceType: webcam; facingMode: environment; debugUIEnabled: false; detectionMode: mono_and_matrix;"
+    embedded>
+
+    <!-- Marqueur "Hiro" (à imprimer). C'est ton point de référence au sol. -->
+    <a-marker preset="hiro" id="marker">
+      <!-- Origine = centre de la demi-sphère. Le sol = plan du marqueur. -->
+      <a-entity id="hemi"></a-entity>
+
+      <!-- Dôme filaire (rayon 1m par défaut). -->
+      <a-entity id="dome"
+        geometry="primitive: sphere; radius: 1; thetaLength: 90; segmentsWidth: 32; segmentsHeight: 16"
+        material="color: #2f6df6; wireframe: true; opacity: 0.25; transparent: true"
+        rotation="-90 0 0"></a-entity>
+
+      <!-- Anneau au sol -->
+      <a-ring id="ring" radius-inner="0.97" radius-outer="1" color="#2f6df6"
+        rotation="-90 0 0" material="side: double"></a-ring>
+
+      <!-- Centre -->
+      <a-sphere radius="0.03" color="#ffcc00" position="0 0 0"></a-sphere>
+    </a-marker>
+
+    <a-entity camera></a-entity>
+  </a-scene>
+
+  <div id="hud">
+    <div class="row">
+      <label>Rotation</label>
+      <input type="range" id="rot" min="0" max="360" step="1" value="0" />
+      <span class="val" id="rotVal">0°</span>
+    </div>
+    <div class="row">
+      <label>Rayon (m)</label>
+      <input type="range" id="rad" min="0.5" max="3" step="0.05" value="1" />
+      <span class="val" id="radVal">1.00</span>
+    </div>
+  </div>
+
+  <script>
+    // ---- Coordonnées normalisées ISO 3744 : 10 micros (x/r, y/r, z/r) ----
+    // z = vertical (hauteur au-dessus du sol/marqueur).
+    const ISO3744 = [
+      [-0.99,  0.00, 0.15],
+      [ 0.50, -0.86, 0.15],
+      [ 0.50,  0.86, 0.15],
+      [-0.45,  0.77, 0.45],
+      [-0.45, -0.77, 0.45],
+      [ 0.89,  0.00, 0.45],
+      [ 0.33,  0.57, 0.75],
+      [-0.66,  0.00, 0.75],
+      [ 0.33, -0.57, 0.75],
+      [ 0.00,  0.00, 1.00],
+    ];
+
+    let radius = 1.0;
+    let rotDeg = 0;
+    const hemi = document.getElementById('hemi');
+    const mics = [];      // entités micros
+    const lines = [];     // lignes vers le centre
+    const labels = [];
+
+    // Construit les 10 micros une seule fois
+    function buildMics() {
+      ISO3744.forEach(([x, y, z], i) => {
+        const mic = document.createElement('a-sphere');
+        mic.setAttribute('radius', 0.045);
+        mic.setAttribute('color', '#ff3b30');
+        hemi.appendChild(mic);
+        mics.push(mic);
+
+        // Étiquette numéro
+        const label = document.createElement('a-text');
+        label.setAttribute('value', String(i + 1));
+        label.setAttribute('align', 'center');
+        label.setAttribute('color', '#ffffff');
+        label.setAttribute('width', 2);
+        label.setAttribute('look-at', '[camera]');
+        hemi.appendChild(label);
+        labels.push(label);
+      });
+      applyGeometry();
+    }
+
+    // Repère AR.js/A-Frame : x droite, y HAUT, z vers la caméra.
+    // On mappe ISO (x, y horizontal ; z vertical) -> (x, z_iso, -y).
+    function applyGeometry() {
+      const rad = rotDeg * Math.PI / 180;
+      const cos = Math.cos(rad), sin = Math.sin(rad);
+      ISO3744.forEach(([x, y, z], i) => {
+        const xr = x * cos - y * sin;
+        const yr = x * sin + y * cos;
+        const px = xr * radius, py = z * radius, pz = -yr * radius;
+        mics[i].setAttribute('position', `${px} ${py} ${pz}`);
+        labels[i].setAttribute('position', `${px} ${py + 0.12} ${pz}`);
+      });
+      document.getElementById('dome').setAttribute('geometry', `primitive: sphere; radius: ${radius}; thetaLength: 90; segmentsWidth: 32; segmentsHeight: 16`);
+      document.getElementById('ring').setAttribute('radius-inner', 0.97 * radius);
+      document.getElementById('ring').setAttribute('radius-outer', 1.0 * radius);
+    }
+
+    // Statut détection marqueur
+    const marker = document.getElementById('marker');
+    const status = document.getElementById('status');
+    marker.addEventListener('markerFound', () => { status.textContent = 'Marqueur détecté ✔ — la sphère est ancrée'; status.style.background = 'rgba(20,80,20,.75)'; });
+    marker.addEventListener('markerLost', () => { status.textContent = 'Marqueur perdu — remets-le dans le champ'; status.style.background = 'rgba(90,20,20,.75)'; });
+
+    // Contrôles
+    document.getElementById('rot').addEventListener('input', (e) => {
+      rotDeg = +e.target.value; document.getElementById('rotVal').textContent = rotDeg + '°'; applyGeometry();
+    });
+    document.getElementById('rad').addEventListener('input', (e) => {
+      radius = +e.target.value; document.getElementById('radVal').textContent = radius.toFixed(2); applyGeometry();
+    });
+
+    window.addEventListener('load', buildMics);
+  </script>
+</body>
+</html>
