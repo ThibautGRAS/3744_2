@@ -261,6 +261,7 @@ document.getElementById('btnSpin').onclick=()=>spin=!spin;
 // drag manuel
 let drag=false, px=0, py=0, theta=Math.PI/4, phi=Math.PI/3.2, rad=3.2;
 view.addEventListener('pointerdown',e=>{drag=true; spin=false; px=e.clientX; py=e.clientY;});
+addEventListener('pointerup',saveState);
 view.addEventListener('pointermove',e=>{ if(!drag)return;
   theta-=(e.clientX-px)*0.01; phi=Math.max(0.15,Math.min(Math.PI/2-0.02,phi-(e.clientY-py)*0.01));
   px=e.clientX; py=e.clientY;});
@@ -376,17 +377,17 @@ btnM.onclick=async()=>{
   const lv = raw + 100;
   levels[current]=lv;
   btnM.disabled=false; btnM.textContent='Mesurer ce point';
-  recolor(); syncCurrent();
+  recolor(); syncCurrent(); saveState();
   // avancer automatiquement au prochain point non mesuré
   const next = levels.findIndex(v=>v===null);
   if(next>=0){ current=next; setTimeout(syncCurrent, 400); }
 };
 document.getElementById('btnSkip').onclick=()=>{
-  current=(current+1)%10; syncCurrent();
+  current=(current+1)%10; syncCurrent(); saveState();
 };
 document.getElementById('btnReset').onclick=()=>{
   if(!confirm('Effacer toutes les mesures ?')) return;
-  for(let i=0;i<10;i++) levels[i]=null; current=0; recolor(); syncCurrent();
+  for(let i=0;i<10;i++) levels[i]=null; current=0; recolor(); syncCurrent(); saveState();
 };
 document.getElementById('btnFieldAR').onclick=exportFieldAR;
 document.getElementById('btnExport').onclick=()=>{
@@ -565,6 +566,37 @@ function exportFieldAR(){
   }, 800);
 }
 
+
+// ---------- persistance de session (survit aux allers-retours AR) ----------
+const STORE_KEY='iso3744_mesures_v1';
+function saveState(){
+  try{
+    localStorage.setItem(STORE_KEY, JSON.stringify({
+      levels, current, cam:{theta, phi, rad, spin}
+    }));
+  }catch(e){}
+}
+function restoreState(){
+  try{
+    const s=JSON.parse(localStorage.getItem(STORE_KEY)||'null');
+    if(!s) return;
+    if(Array.isArray(s.levels)&&s.levels.length===10){
+      for(let i=0;i<10;i++) levels[i]=s.levels[i];
+    }
+    if(typeof s.current==='number') current=s.current;
+    if(s.cam){
+      theta=s.cam.theta??theta; phi=s.cam.phi??phi; rad=s.cam.rad??rad;
+      if(typeof s.cam.spin==='boolean') spin=s.cam.spin;
+    }
+  }catch(e){}
+}
+// sauvegarde de la caméra à chaque interaction et périodiquement
+setInterval(saveState, 1500);
+addEventListener('pagehide', saveState);
+document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='hidden') saveState(); });
+
+restoreState();
+recolor();
 renderTable(); syncCurrent();
 </script>
 </body>
