@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cartographie acoustique — ISO 3744 · CETIM</title>
+<style>
+  :root{
+    --navy:#001E50; --red:#EF3346; --cyan:#E1F6F9; --rose:#FCD9E0;
+    --grey:#C1C7C6; --bg:#F4F6F9; --white:#FFFFFF;
+  }
+  *{box-sizing:border-box; margin:0; -webkit-tap-highlight-color:transparent}
+  body{background:var(--bg); color:var(--navy);
+    font:16px/1.5 "Arial Nova", Arimo, Arial, Helvetica, sans-serif;
+    min-height:100svh; display:flex; flex-direction:column; align-items:center;
+    padding-bottom:env(safe-area-inset-bottom)}
+  header{width:100%; background:var(--white); border-bottom:3px solid var(--red);
+    padding:16px 20px 12px; display:flex; justify-content:center}
+  header img{height:30px}
+  main{max-width:520px; width:100%; padding:20px 18px 40px}
+  .eyebrow{font-size:11px; font-weight:700; letter-spacing:.16em; text-transform:uppercase; color:var(--red)}
+  h1{font-size:22px; font-weight:700; margin:6px 0 4px}
+  p.sub{color:#4a5a75; font-size:13.5px; margin-bottom:20px}
+
+  /* Canvas 3D */
+  #view{width:100%; height:340px; background:var(--white); border:2px solid var(--navy);
+    border-radius:6px; box-shadow:0 2px 8px rgba(0,30,80,.10); position:relative; overflow:hidden; touch-action:none}
+  #view canvas{display:block; width:100%; height:100%}
+  .viewbtns{position:absolute; top:10px; right:10px; display:flex; gap:6px}
+  .viewbtns button{background:rgba(255,255,255,.92); border:1px solid var(--navy); color:var(--navy);
+    font-size:11px; font-weight:700; padding:6px 9px; border-radius:5px; cursor:pointer}
+
+  /* Barre d'échelle couleur */
+  .scale{display:flex; align-items:center; gap:10px; margin:12px 0 4px; font-size:11px; color:#4a5a75}
+  .scale .bar{flex:1; height:12px; border-radius:6px;
+    background:linear-gradient(90deg,#2b6bd6,#33b0c4,#57c785,#e8d24a,#ef8a24,#ef3346)}
+  .scale b{font-variant-numeric:tabular-nums; color:var(--navy)}
+
+  /* Point courant */
+  .current{background:var(--white); border:2px solid var(--navy); border-radius:6px; padding:14px 16px;
+    margin-top:16px; box-shadow:0 2px 6px rgba(0,30,80,.10)}
+  .current .row{display:flex; align-items:center; gap:14px}
+  .current .idx{flex:none; width:46px; height:46px; border-radius:6px; background:var(--red); color:#fff;
+    display:grid; place-items:center; font-weight:700; font-size:18px; font-variant-numeric:tabular-nums}
+  .current .info{flex:1; min-width:0}
+  .current .info strong{display:block; font-size:15px}
+  .current .info span{display:block; color:#4a5a75; font-size:12.5px}
+  .live{margin-top:12px; text-align:center}
+  .live .val{font-size:40px; font-weight:700; font-variant-numeric:tabular-nums; letter-spacing:-.02em}
+  .live .unit{font-size:16px; color:#4a5a75; font-weight:700; margin-left:4px}
+  .live .hint{font-size:12px; color:#4a5a75}
+  .vu{height:8px; border-radius:4px; background:var(--grey); margin:10px 0 0; overflow:hidden}
+  .vu i{display:block; height:100%; width:0; background:var(--red); transition:width .06s linear}
+
+  .btns{display:flex; gap:10px; margin-top:16px}
+  button.act{flex:1; border:none; border-radius:6px; padding:14px; font-size:15px; font-weight:700;
+    cursor:pointer; transition:transform .08s ease}
+  button.act:active{transform:translateY(1px)}
+  .primary{background:var(--red); color:#fff}
+  .ghost{background:var(--white); color:var(--navy); border:2px solid var(--navy)}
+  button:disabled{opacity:.4; pointer-events:none}
+
+  /* Tableau récap */
+  table{width:100%; border-collapse:collapse; margin-top:22px; font-size:13px}
+  th,td{text-align:left; padding:7px 8px; border-bottom:1px solid var(--grey); font-variant-numeric:tabular-nums}
+  th{font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:#4a5a75}
+  td.dot span{display:inline-block; width:12px; height:12px; border-radius:3px; vertical-align:-1px}
+  tr.active{background:var(--cyan)}
+  td.lvl{font-weight:700}
+
+  .note{margin-top:18px; font-size:12px; color:#5a6b85; background:var(--rose);
+    border:1px solid var(--navy); border-radius:4px; padding:11px 13px; line-height:1.5}
+  .foot{margin-top:16px; font-size:11.5px; color:#5a6b85; text-align:center}
+  a.back{color:var(--navy); font-weight:700; text-decoration:none}
+</style>
+</head>
+<body>
+<header><img src="cetim-logo.png" alt="CETIM"></header>
+<main>
+  <div class="eyebrow">ISO 3744 · Cartographie de pression</div>
+  <h1>Mesure acoustique sur l'hémisphère</h1>
+  <p class="sub">Mesure le niveau à chacun des 10 points au micro de l'iPhone. La carte de pression se construit en direct sur l'hémisphère.</p>
+
+  <div id="view">
+    <div class="viewbtns">
+      <button id="btnAR">Voir en AR</button>
+      <button id="btnSpin">Rotation</button>
+    </div>
+  </div>
+
+  <div class="scale">
+    <b id="sMin">— dB</b>
+    <span class="bar"></span>
+    <b id="sMax">— dB</b>
+  </div>
+
+  <div class="current">
+    <div class="row">
+      <div class="idx" id="curIdx">1</div>
+      <div class="info">
+        <strong id="curName">Position 1</strong>
+        <span id="curPos">Hauteur 0,15 m · anneau bas</span>
+      </div>
+    </div>
+    <div class="live">
+      <div><span class="val" id="curVal">–</span><span class="unit">dB(A)</span></div>
+      <div class="hint" id="curHint">Place le micro au point, puis lance la mesure (3 s).</div>
+      <div class="vu"><i id="vuBar"></i></div>
+    </div>
+    <div class="btns">
+      <button class="act primary" id="btnMeasure">Mesurer ce point</button>
+      <button class="act ghost" id="btnSkip">Passer</button>
+    </div>
+  </div>
+
+  <table>
+    <thead><tr><th>#</th><th>Hauteur</th><th>Niveau</th><th></th></tr></thead>
+    <tbody id="tbody"></tbody>
+  </table>
+
+  <div class="btns">
+    <button class="act ghost" id="btnReset">Tout effacer</button>
+    <button class="act ghost" id="btnExport">Exporter les niveaux</button>
+  </div>
+
+  <div class="note" id="calibNote">
+    <strong>Mesure relative.</strong> Le micro de l'iPhone n'est pas calibré en absolu : les valeurs servent à comparer les points entre eux (répartition, direction de rayonnement), pas à fournir un niveau de puissance certifié ISO 3744. Le gain automatique est désactivé au mieux ; garde une distance micro-source constante entre les points.
+  </div>
+
+  <p class="foot"><a class="back" href="index.html">← Retour aux gabarits</a> · CETIM · ISO 3744:2010 Table B.2</p>
+</main>
+
+<script type="module">
+import * as THREE from 'https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.module.min.js';
+
+// ---------- positions ISO 3744 B.2 (x/r,y/r,z/r) ----------
+const POS = [
+  [-0.99, 0.00, 0.15],[0.50,-0.86,0.15],[0.50,0.86,0.15],[-0.45,0.77,0.45],[-0.45,-0.77,0.45],
+  [0.89,0.00,0.45],[0.33,0.57,0.75],[-0.66,0.00,0.75],[0.33,-0.57,0.75],[0.00,0.00,1.00]
+];
+const R = 1.0;
+const ringName = z => z<0.3?'anneau bas':z<0.6?'anneau médian':z<0.9?'anneau haut':'sommet';
+// USD/three : y vertical. ISO z-up -> (x, z, y)
+const p3 = p => new THREE.Vector3(p[0]*R, p[2]*R, p[1]*R);
+
+const levels = new Array(10).fill(null);
+let current = 0;
+
+// ---------- couleur turbo-like (bleu->rouge) ----------
+function ramp(t){ // t 0..1
+  t = Math.max(0, Math.min(1, t));
+  const stops = [[43,107,214],[51,176,196],[87,199,133],[232,210,74],[239,138,36],[239,51,70]];
+  const x = t*(stops.length-1); const i = Math.floor(x); const f = x-i;
+  const a = stops[i], b = stops[Math.min(i+1,stops.length-1)];
+  return [a[0]+(b[0]-a[0])*f, a[1]+(b[1]-a[1])*f, a[2]+(b[2]-a[2])*f].map(v=>v/255);
+}
+
+// ---------- three.js scène ----------
+const view = document.getElementById('view');
+const renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+function size(){ renderer.setSize(view.clientWidth, view.clientHeight, false); camera.aspect=view.clientWidth/view.clientHeight; camera.updateProjectionMatrix(); }
+view.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 100);
+camera.position.set(2.1, 1.5, 2.1);
+camera.lookAt(0, 0.42, 0);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x8899aa, 1.4));
+const dir = new THREE.DirectionalLight(0xffffff, 0.6); dir.position.set(3,5,2); scene.add(dir);
+
+// hémisphère coloré (vertex colors interpolés)
+const geo = new THREE.SphereGeometry(R, 64, 32, 0, Math.PI*2, 0, Math.PI/2);
+const cols = new Float32Array(geo.attributes.position.count*3);
+geo.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+const mat = new THREE.MeshStandardMaterial({vertexColors:true, transparent:true, opacity:0.55,
+  roughness:0.7, metalness:0.0, side:THREE.DoubleSide});
+const dome = new THREE.Mesh(geo, mat); scene.add(dome);
+
+// wireframe léger
+const wire = new THREE.Mesh(new THREE.SphereGeometry(R*1.001,24,12,0,Math.PI*2,0,Math.PI/2),
+  new THREE.MeshBasicMaterial({color:0x2a3444, wireframe:true, transparent:true, opacity:0.14}));
+scene.add(wire);
+
+// sol
+const floor = new THREE.Mesh(new THREE.CircleGeometry(R*1.15, 48),
+  new THREE.MeshBasicMaterial({color:0xdfe4ea, transparent:true, opacity:0.5}));
+floor.rotation.x = -Math.PI/2; scene.add(floor);
+
+// marqueurs de points
+const markers = [];
+POS.forEach((p,i)=>{
+  const m = new THREE.Mesh(new THREE.SphereGeometry(0.035,16,16),
+    new THREE.MeshStandardMaterial({color:0xef3346, roughness:0.5}));
+  m.position.copy(p3(p)); scene.add(m); markers.push(m);
+});
+
+// ---------- interpolation IDW sur les sommets ----------
+function recolor(){
+  const vals = levels.map((v,i)=>({v, pos:p3(POS[i])})).filter(o=>o.v!==null);
+  const posAttr = geo.attributes.position;
+  const known = vals.length;
+  let lo=Infinity, hi=-Infinity;
+  vals.forEach(o=>{lo=Math.min(lo,o.v); hi=Math.max(hi,o.v);});
+  if(known===0){ lo=0; hi=1; }
+  const span = (hi-lo)||1;
+  for(let vi=0; vi<posAttr.count; vi++){
+    const vx=posAttr.getX(vi), vy=posAttr.getY(vi), vz=posAttr.getZ(vi);
+    let num=0, den=0, exact=null;
+    if(known>0){
+      for(const o of vals){
+        const dx=vx-o.pos.x, dy=vy-o.pos.y, dz=vz-o.pos.z;
+        const d2=dx*dx+dy*dy+dz*dz;
+        if(d2<1e-5){ exact=o.v; break; }
+        const w=1/(d2*d2); num+=w*o.v; den+=w;
+      }
+    }
+    let c;
+    if(known===0){ c=[0.82,0.85,0.90]; }
+    else { const val = exact!==null?exact:num/den; c=ramp((val-lo)/span); }
+    cols[vi*3]=c[0]; cols[vi*3+1]=c[1]; cols[vi*3+2]=c[2];
+  }
+  geo.attributes.color.needsUpdate = true;
+  // marqueurs colorés selon leur niveau
+  markers.forEach((m,i)=>{
+    if(levels[i]!==null){ const c=ramp((levels[i]-lo)/span); m.material.color.setRGB(c[0],c[1],c[2]); }
+    else m.material.color.setHex(0xef3346);
+  });
+  document.getElementById('sMin').textContent = known?lo.toFixed(1)+' dB':'— dB';
+  document.getElementById('sMax').textContent = known?hi.toFixed(1)+' dB':'— dB';
+}
+
+// ---------- rotation & rendu ----------
+let spin=true, ang=0;
+document.getElementById('btnSpin').onclick=()=>spin=!spin;
+// drag manuel
+let drag=false, px=0, py=0, theta=Math.PI/4, phi=Math.PI/3.2, rad=3.2;
+view.addEventListener('pointerdown',e=>{drag=true; spin=false; px=e.clientX; py=e.clientY;});
+view.addEventListener('pointermove',e=>{ if(!drag)return;
+  theta-=(e.clientX-px)*0.01; phi=Math.max(0.15,Math.min(Math.PI/2-0.02,phi-(e.clientY-py)*0.01));
+  px=e.clientX; py=e.clientY;});
+addEventListener('pointerup',()=>drag=false);
+function loop(){
+  requestAnimationFrame(loop);
+  if(spin) theta+=0.004;
+  camera.position.set(rad*Math.sin(phi)*Math.sin(theta), rad*Math.cos(phi)+0.1, rad*Math.sin(phi)*Math.cos(theta));
+  camera.lookAt(0,0.42,0);
+  renderer.render(scene,camera);
+}
+size(); addEventListener('resize',size); recolor(); loop();
+
+// ---------- table & point courant ----------
+const tbody=document.getElementById('tbody');
+function heightM(i){ return (POS[i][2]*R).toFixed(2).replace('.',','); }
+function renderTable(){
+  tbody.innerHTML='';
+  POS.forEach((p,i)=>{
+    const tr=document.createElement('tr'); if(i===current) tr.className='active';
+    const lv=levels[i];
+    tr.innerHTML=`<td>${i+1}</td><td>${heightM(i)} m</td>`+
+      `<td class="lvl">${lv===null?'—':lv.toFixed(1)+' dB'}</td>`+
+      `<td class="dot"><span style="background:${lv===null?'#C1C7C6':rgbCss(i)}"></span></td>`;
+    tr.onclick=()=>{current=i; syncCurrent();};
+    tbody.appendChild(tr);
+  });
+}
+function rgbCss(i){
+  const vals=levels.filter(v=>v!==null); if(!vals.length||levels[i]===null) return '#C1C7C6';
+  const lo=Math.min(...vals), hi=Math.max(...vals), c=ramp((levels[i]-lo)/((hi-lo)||1));
+  return `rgb(${c.map(v=>Math.round(v*255)).join(',')})`;
+}
+function syncCurrent(){
+  document.getElementById('curIdx').textContent=current+1;
+  document.getElementById('curName').textContent='Position '+(current+1);
+  document.getElementById('curPos').textContent=`Hauteur ${heightM(current)} m · ${ringName(POS[current][2])}`;
+  const lv=levels[current];
+  document.getElementById('curVal').textContent = lv===null?'–':lv.toFixed(1);
+  document.getElementById('curHint').textContent = lv===null
+    ? 'Place le micro au point, puis lance la mesure (3 s).'
+    : 'Mesuré. Tu peux remesurer ou passer au point suivant.';
+  renderTable();
+}
+
+// ---------- micro / Web Audio ----------
+let audioCtx=null, analyser=null, srcNode=null, stream=null, dataArr=null;
+async function ensureMic(){
+  if(analyser) return true;
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({audio:{
+      echoCancellation:false, noiseSuppression:false, autoGainControl:false}});
+    audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+    if(audioCtx.state==='suspended') await audioCtx.resume();
+    srcNode = audioCtx.createMediaStreamSource(stream);
+    analyser = audioCtx.createAnalyser(); analyser.fftSize=4096; analyser.smoothingTimeConstant=0;
+    srcNode.connect(analyser);
+    dataArr = new Float32Array(analyser.fftSize);
+    return true;
+  }catch(e){ alert('Micro indisponible : '+e.message+'\nOuvre la page dans Safari ou Chrome et autorise le micro.'); return false; }
+}
+// pondération A approximée par pesée fréquentielle du spectre
+function aWeight(f){
+  const f2=f*f;
+  const ra = (12194**2 * f2*f2) /
+    ((f2+20.6**2)*Math.sqrt((f2+107.7**2)*(f2+737.9**2))*(f2+12194**2));
+  return 20*Math.log10(ra)+2.00;
+}
+function measureLA(ms){
+  return new Promise(resolve=>{
+    const freq = new Float32Array(analyser.frequencyBinCount);
+    const sr = audioCtx.sampleRate;
+    const acc=[]; const t0=performance.now();
+    const vu=document.getElementById('vuBar');
+    function step(){
+      analyser.getFloatFrequencyData(freq); // dB
+      // somme énergétique pondérée A
+      let e=0;
+      for(let k=1;k<freq.length;k++){
+        const f=k*sr/analyser.fftSize;
+        if(f<20||f>20000) continue;
+        const db=freq[k]; if(db<=-140) continue;
+        const linA = Math.pow(10,(db+aWeight(f))/10);
+        e+=linA;
+      }
+      const la = 10*Math.log10(e+1e-12);
+      acc.push(la);
+      // VU relatif
+      const rel = Math.max(0,Math.min(1,(la+90)/90));
+      vu.style.width=(rel*100)+'%';
+      document.getElementById('curVal').textContent = la.toFixed(1);
+      if(performance.now()-t0<ms) requestAnimationFrame(step);
+      else{
+        // moyenne énergétique
+        const lin = acc.map(v=>Math.pow(10,v/10));
+        const avg = 10*Math.log10(lin.reduce((a,b)=>a+b,0)/lin.length);
+        vu.style.width='0%';
+        resolve(avg);
+      }
+    }
+    step();
+  });
+}
+
+const btnM=document.getElementById('btnMeasure');
+btnM.onclick=async()=>{
+  if(!(await ensureMic())) return;
+  btnM.disabled=true; btnM.textContent='Mesure… 3 s';
+  document.getElementById('curHint').textContent='Mesure en cours, ne bouge pas le micro…';
+  // offset de référence : on affiche des dB relatifs "utiles" (le niveau brut Web Audio est négatif)
+  const raw = await measureLA(3000);
+  // recaler vers une échelle lisible : +100 pour éviter les négatifs (offset constant, sans effet sur les écarts)
+  const lv = raw + 100;
+  levels[current]=lv;
+  btnM.disabled=false; btnM.textContent='Mesurer ce point';
+  recolor(); syncCurrent();
+  // avancer automatiquement au prochain point non mesuré
+  const next = levels.findIndex(v=>v===null);
+  if(next>=0){ current=next; setTimeout(syncCurrent, 400); }
+};
+document.getElementById('btnSkip').onclick=()=>{
+  current=(current+1)%10; syncCurrent();
+};
+document.getElementById('btnReset').onclick=()=>{
+  if(!confirm('Effacer toutes les mesures ?')) return;
+  for(let i=0;i<10;i++) levels[i]=null; current=0; recolor(); syncCurrent();
+};
+document.getElementById('btnExport').onclick=()=>{
+  const rows=[['point','hauteur_m','x_r','y_r','z_r','niveau_dBA_relatif']];
+  POS.forEach((p,i)=>rows.push([i+1,(p[2]*R).toFixed(3),p[0],p[1],p[2],levels[i]===null?'':levels[i].toFixed(2)]));
+  const csv=rows.map(r=>r.join(',')).join('\n');
+  const blob=new Blob([csv],{type:'text/csv'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+  a.download='mesures_iso3744.csv'; a.click();
+};
+
+// ---------- WebXR AR ----------
+const btnAR=document.getElementById('btnAR');
+if(navigator.xr){
+  navigator.xr.isSessionSupported('immersive-ar').then(ok=>{ if(!ok) btnAR.textContent='AR indispo'; });
+} else btnAR.textContent='AR indispo';
+btnAR.onclick=async()=>{
+  if(!navigator.xr){ alert("La réalité augmentée WebXR n'est pas disponible sur ce navigateur. Sur iPhone, utilise Chrome (WebXR Viewer) ou consulte la carte 3D ci-dessus."); return; }
+  try{
+    const session=await navigator.xr.requestSession('immersive-ar',{requiredFeatures:['hit-test','local-floor']});
+    renderer.xr.enabled=true; await renderer.xr.setSession(session);
+    dome.scale.set(1,1,1);
+  }catch(e){ alert('AR non lancée : '+e.message); }
+};
+
+renderTable(); syncCurrent();
+</script>
+</body>
+</html>
