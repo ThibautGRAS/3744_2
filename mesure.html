@@ -549,7 +549,7 @@ function exportFieldAR(){
   // Tentative 1 : lien rel="ar" avec img enfant -> AR Quick Look direct
   const a=document.createElement('a');
   a.setAttribute('rel','ar');
-  a.href=url;
+  a.href=url+'#callToAction='+encodeURIComponent('Revenir à la mesure');
   const img=document.createElement('img');
   img.src='badge-cible.png'; img.style.display='none';
   a.appendChild(img);
@@ -612,6 +612,15 @@ if(arPoints){
 
 restoreState();
 recolor();
+
+// Bouton bannière AR "Revenir à la mesure" (Quick Look ferme et notifie la page)
+const arPointsLink=document.getElementById('arPoints');
+if(arPointsLink){
+  arPointsLink.addEventListener('message', ev=>{
+    document.getElementById('view').scrollIntoView({behavior:'smooth'});
+  });
+}
+
 renderTable(); syncCurrent();
 </script>
 </body>
