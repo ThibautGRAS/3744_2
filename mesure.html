@@ -93,7 +93,7 @@
   <p class="sub">Mesure le niveau à chacun des 10 points au micro de l'iPhone. La carte de pression se construit en direct sur l'hémisphère.</p>
 
   <div class="stephdr"><span class="stepnum">1</span> Repérage des positions</div>
-  <a class="cfg-ar" rel="ar" href="hemi-b2-10.usdz">
+  <a class="cfg-ar" rel="ar" href="hemi-b2-10.usdz#callToAction=Passer%20à%20la%20mesure&checkoutTitle=ISO%203744%20·%2010%20positions&checkoutSubtitle=Repère%20les%20points%2C%20puis%20mesure%20au%20micro" id="arPoints">
     <img src="badge-10.png" alt="10" style="width:36px;height:36px;border-radius:4px">
     <span class="txt"><strong>Voir les 10 points en AR</strong>
     <span>Hémisphère numéroté posé dans la pièce — repère puis marque les positions au sol</span></span>
@@ -594,6 +594,21 @@ function restoreState(){
 setInterval(saveState, 1500);
 addEventListener('pagehide', saveState);
 document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='hidden') saveState(); });
+
+
+// Bannière AR Quick Look : "Passer à la mesure" ramène à l'étape 2
+const arPoints = document.getElementById('arPoints');
+if(arPoints){
+  arPoints.addEventListener('message', function(ev){
+    if(ev.data === '_apple_ar_quicklook_button_tapped'){
+      setTimeout(function(){
+        document.getElementById('view').scrollIntoView({behavior:'smooth'});
+        const cur = document.querySelector('.current');
+        if(cur){ cur.style.outline='3px solid #EF3346'; setTimeout(()=>cur.style.outline='', 2500); }
+      }, 300);
+    }
+  });
+}
 
 restoreState();
 recolor();
