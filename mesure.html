@@ -93,7 +93,7 @@
   <p class="sub">Mesure le niveau à chacun des 10 points au micro de l'iPhone. La carte de pression se construit en direct sur l'hémisphère.</p>
 
   <div class="stephdr"><span class="stepnum">1</span> Repérage des positions</div>
-  <a class="cfg-ar" rel="ar" href="hemi-b2-10.usdz#callToAction=Passer%20à%20la%20mesure&checkoutTitle=ISO%203744%20·%2010%20positions&checkoutSubtitle=Repère%20les%20points%2C%20puis%20mesure%20au%20micro" id="arPoints">
+  <a class="cfg-ar" rel="ar" href="hemi-b2-10.usdz#callToAction=Retour%20mesure" id="arPoints">
     <img src="badge-10.png" alt="10" style="width:36px;height:36px;border-radius:4px">
     <span class="txt"><strong>Voir les 10 points en AR</strong>
     <span>Hémisphère numéroté posé dans la pièce — repère puis marque les positions au sol</span></span>
@@ -549,7 +549,7 @@ function exportFieldAR(){
   // Tentative 1 : lien rel="ar" avec img enfant -> AR Quick Look direct
   const a=document.createElement('a');
   a.setAttribute('rel','ar');
-  a.href=url+'#callToAction='+encodeURIComponent('Revenir à la mesure');
+  a.href=url+'#callToAction='+encodeURIComponent('Retour mesure');
   const img=document.createElement('img');
   img.src='badge-cible.png'; img.style.display='none';
   a.appendChild(img);
