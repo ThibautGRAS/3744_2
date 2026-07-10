@@ -508,14 +508,28 @@ function buildUSDA(){
   s+='def Xform "Root" (\n    prepend apiSchemas = ["Preliminary_AnchoringAPI"]\n)\n{\n';
   s+='    token preliminary:anchoring:type = "plane"\n    token preliminary:planeAnchoring:alignment = "horizontal"\n\n';
   // Mesh
-  s+='    def Mesh "Field"\n    {\n';
+  // matériau mat semi-transparent lisant les couleurs de sommets
+  s+='    def Material "FieldMat"\n    {\n';
+  s+='        token outputs:surface.connect = </Root/FieldMat/PBR.outputs:surface>\n\n';
+  s+='        def Shader "PBR"\n        {\n';
+  s+='            uniform token info:id = "UsdPreviewSurface"\n';
+  s+='            color3f inputs:diffuseColor.connect = </Root/FieldMat/cReader.outputs:result>\n';
+  s+='            float inputs:opacity = 0.4\n';
+  s+='            float inputs:roughness = 1\n';
+  s+='            float inputs:metallic = 0\n';
+  s+='            token outputs:surface\n        }\n';
+  s+='        def Shader "cReader"\n        {\n';
+  s+='            uniform token info:id = "UsdPrimvarReader_float3"\n';
+  s+='            token inputs:varname = "displayColor"\n';
+  s+='            float3 outputs:result\n        }\n    }\n\n';
+  s+='    def Mesh "Field" (\n        prepend apiSchemas = ["MaterialBindingAPI"]\n    )\n    {\n';
+  s+='        rel material:binding = </Root/FieldMat>\n';
   s+='        uniform bool doubleSided = 1\n';
   s+='        float3[] extent = [(-1, 0, -1), (1, 1, 1)]\n';
   s+='        int[] faceVertexCounts = ['+faces.map(()=>3).join(', ')+']\n';
   s+='        int[] faceVertexIndices = ['+faces.flat().join(', ')+']\n';
   s+='        point3f[] points = ['+verts.map(v=>`(${f(v[0])}, ${f(v[1])}, ${f(v[2])})`).join(', ')+']\n';
   s+='        color3f[] primvars:displayColor = ['+colors.map(c=>`(${f(c[0])}, ${f(c[1])}, ${f(c[2])})`).join(', ')+'] (\n            interpolation = "vertex"\n        )\n';
-  s+='        float[] primvars:displayOpacity = [0.55] (\n            interpolation = "constant"\n        )\n';
   s+='        uniform token subdivisionScheme = "none"\n    }\n\n';
   // Centre
   s+='    def Cylinder "Center"\n    {\n        uniform token axis = "Y"\n        double height = 0.004\n        double radius = 0.05\n        color3f[] primvars:displayColor = [(0.937, 0.2, 0.275)] (interpolation = "constant")\n        double3 xformOp:translate = (0, 0.002, 0)\n        uniform token[] xformOpOrder = ["xformOp:translate"]\n    }\n\n';
