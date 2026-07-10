@@ -48,6 +48,12 @@
   .scale b{font-variant-numeric:tabular-nums; color:var(--navy)}
 
   /* Point courant */
+  .ctrl{display:flex; gap:14px; margin:10px 0 4px; font-size:12px; color:#4a5a75}
+  .ctrl label{flex:1; display:flex; flex-direction:column; gap:5px; font-weight:700; color:var(--navy)}
+  .ctrl select{padding:9px 10px; border:2px solid var(--navy); border-radius:5px; background:var(--white);
+    font:inherit; color:var(--navy); font-weight:700}
+  .ctrl input[type=range]{width:100%; accent-color:var(--red); height:30px}
+  .ctrl b{color:var(--red); font-variant-numeric:tabular-nums}
   .current{background:var(--white); border:2px solid var(--navy); border-radius:6px; padding:14px 16px;
     margin-top:16px; box-shadow:0 2px 6px rgba(0,30,80,.10)}
   .current .row{display:flex; align-items:center; gap:14px}
@@ -114,6 +120,15 @@
     <b id="sMax">— dB</b>
   </div>
 
+  <div class="ctrl">
+    <label>Bande
+      <select id="bandSel"><option value="-1">Global dB(A)</option></select>
+    </label>
+    <label>Dynamique <b id="dynLbl">auto</b>
+      <input type="range" id="dynSlider" min="0" max="30" step="1" value="0">
+    </label>
+  </div>
+
   <div class="current">
     <div class="row">
       <div class="idx" id="curIdx">1</div>
@@ -123,7 +138,7 @@
       </div>
     </div>
     <div class="live">
-      <div><span class="val" id="curVal">–</span><span class="unit">dB(A)</span></div>
+      <div><span class="val" id="curVal">–</span><span class="unit" id="curUnit">dB(A)</span></div>
       <div class="hint" id="curHint">Place le micro au point, puis lance la mesure (3 s).</div>
       <div class="vu"><i id="vuBar"></i></div>
     </div>
@@ -180,6 +195,25 @@ function ramp(t){ // t 0..1
   return [a[0]+(b[0]-a[0])*f, a[1]+(b[1]-a[1])*f, a[2]+(b[2]-a[2])*f].map(v=>v/255);
 }
 
+
+// ---------- tiers d'octave & selection d'affichage ----------
+const BANDS=[50,63,80,100,125,160,200,250,315,400,500,630,800,1000,1250,1600,2000,2500,3150,4000,5000,6300,8000,10000];
+let selBand=-1;
+let dynDb=0;
+function val(i){
+  const L=levels[i]; if(L==null) return null;
+  if(typeof L==='number') return selBand<0 ? L : null;
+  if(selBand<0) return L.g;
+  return (L.b && isFinite(L.b[selBand])) ? L.b[selBand] : null;
+}
+function bounds(){
+  const vs=[]; for(let i=0;i<10;i++){const v=val(i); if(v!==null&&isFinite(v)) vs.push(v);}
+  if(!vs.length) return null;
+  const hi=Math.max(...vs); let lo=Math.min(...vs);
+  if(dynDb>0) lo=hi-dynDb;
+  return {lo, hi, span:(hi-lo)||1};
+}
+
 // ---------- three.js scène ----------
 const view = document.getElementById('view');
 const renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
@@ -222,37 +256,34 @@ POS.forEach((p,i)=>{
 
 // ---------- interpolation IDW sur les sommets ----------
 function recolor(){
-  const vals = levels.map((v,i)=>({v, pos:p3(POS[i])})).filter(o=>o.v!==null);
+  const B=bounds();
+  const pts=[]; for(let i=0;i<10;i++){const v=val(i); if(v!==null&&isFinite(v)) pts.push({v, pos:p3(POS[i])});}
   const posAttr = geo.attributes.position;
-  const known = vals.length;
-  let lo=Infinity, hi=-Infinity;
-  vals.forEach(o=>{lo=Math.min(lo,o.v); hi=Math.max(hi,o.v);});
-  if(known===0){ lo=0; hi=1; }
-  const span = (hi-lo)||1;
   for(let vi=0; vi<posAttr.count; vi++){
-    const vx=posAttr.getX(vi), vy=posAttr.getY(vi), vz=posAttr.getZ(vi);
-    let num=0, den=0, exact=null;
-    if(known>0){
-      for(const o of vals){
+    let c;
+    if(!B){ c=[0.82,0.85,0.90]; }
+    else{
+      const vx=posAttr.getX(vi), vy=posAttr.getY(vi), vz=posAttr.getZ(vi);
+      let num=0, den=0, exact=null;
+      for(const o of pts){
         const dx=vx-o.pos.x, dy=vy-o.pos.y, dz=vz-o.pos.z;
         const d2=dx*dx+dy*dy+dz*dz;
         if(d2<1e-5){ exact=o.v; break; }
         const w=1/(d2*d2); num+=w*o.v; den+=w;
       }
+      const v = exact!==null?exact:num/den;
+      c = ramp((v-B.lo)/B.span);
     }
-    let c;
-    if(known===0){ c=[0.82,0.85,0.90]; }
-    else { const val = exact!==null?exact:num/den; c=ramp((val-lo)/span); }
     cols[vi*3]=c[0]; cols[vi*3+1]=c[1]; cols[vi*3+2]=c[2];
   }
   geo.attributes.color.needsUpdate = true;
-  // marqueurs colorés selon leur niveau
   markers.forEach((m,i)=>{
-    if(levels[i]!==null){ const c=ramp((levels[i]-lo)/span); m.material.color.setRGB(c[0],c[1],c[2]); }
+    const v=val(i);
+    if(v!==null && B){ const c=ramp((v-B.lo)/B.span); m.material.color.setRGB(c[0],c[1],c[2]); }
     else m.material.color.setHex(0xef3346);
   });
-  document.getElementById('sMin').textContent = known?lo.toFixed(1)+' dB':'— dB';
-  document.getElementById('sMax').textContent = known?hi.toFixed(1)+' dB':'— dB';
+  document.getElementById('sMin').textContent = B?B.lo.toFixed(1)+' dB':'\u2014 dB';
+  document.getElementById('sMax').textContent = B?B.hi.toFixed(1)+' dB':'\u2014 dB';
 }
 
 // ---------- rotation & rendu ----------
@@ -282,7 +313,7 @@ function renderTable(){
   tbody.innerHTML='';
   POS.forEach((p,i)=>{
     const tr=document.createElement('tr'); if(i===current) tr.className='active';
-    const lv=levels[i];
+    const lv=val(i);
     tr.innerHTML=`<td>${i+1}</td><td>${heightM(i)} m</td>`+
       `<td class="lvl">${lv===null?'—':lv.toFixed(1)+' dB'}</td>`+
       `<td class="dot"><span style="background:${lv===null?'#C1C7C6':rgbCss(i)}"></span></td>`;
@@ -291,15 +322,17 @@ function renderTable(){
   });
 }
 function rgbCss(i){
-  const vals=levels.filter(v=>v!==null); if(!vals.length||levels[i]===null) return '#C1C7C6';
-  const lo=Math.min(...vals), hi=Math.max(...vals), c=ramp((levels[i]-lo)/((hi-lo)||1));
-  return `rgb(${c.map(v=>Math.round(v*255)).join(',')})`;
+  const B=bounds(); const v=val(i);
+  if(!B||v===null) return '#C1C7C6';
+  const c=ramp((v-B.lo)/B.span);
+  return `rgb(${c.map(x=>Math.round(x*255)).join(',')})`;
 }
 function syncCurrent(){
   document.getElementById('curIdx').textContent=current+1;
   document.getElementById('curName').textContent='Position '+(current+1);
   document.getElementById('curPos').textContent=`Hauteur ${heightM(current)} m · ${ringName(POS[current][2])}`;
-  const lv=levels[current];
+  const lv=val(current);
+  document.getElementById('curUnit').textContent = selBand<0?'dB(A)':'dB';
   document.getElementById('curVal').textContent = lv===null?'–':lv.toFixed(1);
   document.getElementById('curHint').textContent = lv===null
     ? 'Place le micro au point, puis lance la mesure (3 s).'
@@ -317,7 +350,7 @@ async function ensureMic(){
     audioCtx = new (window.AudioContext||window.webkitAudioContext)();
     if(audioCtx.state==='suspended') await audioCtx.resume();
     srcNode = audioCtx.createMediaStreamSource(stream);
-    analyser = audioCtx.createAnalyser(); analyser.fftSize=4096; analyser.smoothingTimeConstant=0;
+    analyser = audioCtx.createAnalyser(); analyser.fftSize=16384; analyser.smoothingTimeConstant=0;
     srcNode.connect(analyser);
     dataArr = new Float32Array(analyser.fftSize);
     return true;
@@ -330,36 +363,46 @@ function aWeight(f){
     ((f2+20.6**2)*Math.sqrt((f2+107.7**2)*(f2+737.9**2))*(f2+12194**2));
   return 20*Math.log10(ra)+2.00;
 }
-function measureLA(ms){
+function measureSpectrum(ms){
   return new Promise(resolve=>{
     const freq = new Float32Array(analyser.frequencyBinCount);
     const sr = audioCtx.sampleRate;
-    const acc=[]; const t0=performance.now();
+    const K = Math.pow(2, 1/6);
+    const binBand = new Int16Array(analyser.frequencyBinCount).fill(-1);
+    for(let k=1;k<binBand.length;k++){
+      const f=k*sr/analyser.fftSize;
+      for(let b=0;b<BANDS.length;b++){
+        if(f>=BANDS[b]/K && f<BANDS[b]*K){ binBand[k]=b; break; }
+      }
+    }
+    let gSum=0, nF=0;
+    const bSum = new Float64Array(BANDS.length);
+    const t0=performance.now();
     const vu=document.getElementById('vuBar');
     function step(){
-      analyser.getFloatFrequencyData(freq); // dB
-      // somme énergétique pondérée A
-      let e=0;
+      analyser.getFloatFrequencyData(freq);
+      let eG=0;
+      const eB = new Float64Array(BANDS.length);
       for(let k=1;k<freq.length;k++){
+        const db=freq[k]; if(db<=-140) continue;
         const f=k*sr/analyser.fftSize;
         if(f<20||f>20000) continue;
-        const db=freq[k]; if(db<=-140) continue;
-        const linA = Math.pow(10,(db+aWeight(f))/10);
-        e+=linA;
+        const p=Math.pow(10, db/10);
+        eG += p*Math.pow(10, aWeight(f)/10);
+        const b=binBand[k]; if(b>=0) eB[b]+=p;
       }
-      const la = 10*Math.log10(e+1e-12);
-      acc.push(la);
-      // VU relatif
-      const rel = Math.max(0,Math.min(1,(la+90)/90));
-      vu.style.width=(rel*100)+'%';
-      document.getElementById('curVal').textContent = la.toFixed(1);
+      gSum+=eG; for(let b=0;b<BANDS.length;b++) bSum[b]+=eB[b];
+      nF++;
+      const la=10*Math.log10(eG+1e-12);
+      vu.style.width=(Math.max(0,Math.min(1,(la+90)/90))*100)+'%';
+      document.getElementById('curVal').textContent=(la+100).toFixed(1);
       if(performance.now()-t0<ms) requestAnimationFrame(step);
       else{
-        // moyenne énergétique
-        const lin = acc.map(v=>Math.pow(10,v/10));
-        const avg = 10*Math.log10(lin.reduce((a,b)=>a+b,0)/lin.length);
         vu.style.width='0%';
-        resolve(avg);
+        resolve({
+          g: 10*Math.log10(gSum/nF+1e-12),
+          b: Array.from(bSum, e=>10*Math.log10(e/nF+1e-12))
+        });
       }
     }
     step();
@@ -372,10 +415,8 @@ btnM.onclick=async()=>{
   btnM.disabled=true; btnM.textContent='Mesure… 3 s';
   document.getElementById('curHint').textContent='Mesure en cours, ne bouge pas le micro…';
   // offset de référence : on affiche des dB relatifs "utiles" (le niveau brut Web Audio est négatif)
-  const raw = await measureLA(3000);
-  // recaler vers une échelle lisible : +100 pour éviter les négatifs (offset constant, sans effet sur les écarts)
-  const lv = raw + 100;
-  levels[current]=lv;
+  const raw = await measureSpectrum(3000);
+  levels[current]={g: raw.g+100, b: raw.b.map(v=>v+100)};
   btnM.disabled=false; btnM.textContent='Mesurer ce point';
   recolor(); syncCurrent(); saveState();
   // avancer automatiquement au prochain point non mesuré
@@ -391,8 +432,14 @@ document.getElementById('btnReset').onclick=()=>{
 };
 document.getElementById('btnFieldAR').onclick=exportFieldAR;
 document.getElementById('btnExport').onclick=()=>{
-  const rows=[['point','hauteur_m','x_r','y_r','z_r','niveau_dBA_relatif']];
-  POS.forEach((p,i)=>rows.push([i+1,(p[2]*R).toFixed(3),p[0],p[1],p[2],levels[i]===null?'':levels[i].toFixed(2)]));
+  const head=['point','hauteur_m','x_r','y_r','z_r','LA_global_rel'].concat(BANDS.map(fc=>'L_'+fc+'Hz_rel'));
+  const rows=[head];
+  POS.forEach((p,i)=>{
+    const L=levels[i];
+    const g = L==null ? '' : (typeof L==='number'? L.toFixed(2) : L.g.toFixed(2));
+    const b = (L&&L.b) ? L.b.map(v=>v.toFixed(2)) : BANDS.map(()=> '');
+    rows.push([i+1,(p[2]*R).toFixed(3),p[0],p[1],p[2],g].concat(b));
+  });
   const csv=rows.map(r=>r.join(',')).join('\n');
   const blob=new Blob([csv],{type:'text/csv'});
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
@@ -428,10 +475,10 @@ function buildDome(SL, ST, R){
 function isoToUsd(p,R){ return [p[0]*R, p[2]*R, p[1]*R]; }
 
 function fieldColorsFor(verts){
-  const known = levels.map((v,i)=>({v,pos:isoToUsd(POS[i],1.0)})).filter(o=>o.v!==null);
+  const B=bounds(); if(!B) return null;
+  const known=[]; for(let i=0;i<10;i++){const v=val(i); if(v!==null&&isFinite(v)) known.push({v,pos:isoToUsd(POS[i],1.0)});}
   if(known.length===0) return null;
-  let lo=Infinity,hi=-Infinity; known.forEach(o=>{lo=Math.min(lo,o.v);hi=Math.max(hi,o.v);});
-  const span=(hi-lo)||1;
+  const lo=B.lo, span=B.span;
   return verts.map(v=>{
     let num=0,den=0,exact=null;
     for(const o of known){
@@ -455,9 +502,7 @@ function buildUSDA(){
   const {verts,faces}=buildDome(48,24,R);
   const colors=fieldColorsFor(verts);
   if(!colors) return null;
-  const known=levels.map((v,i)=>({v,i})).filter(o=>o.v!==null);
-  let lo=Infinity,hi=-Infinity; known.forEach(o=>{lo=Math.min(lo,o.v);hi=Math.max(hi,o.v);});
-  const span=(hi-lo)||1;
+  const Bb=bounds(); const lo=Bb?Bb.lo:0, span=Bb?Bb.span:1;
 
   let s='#usda 1.0\n(\n    defaultPrim = "Root"\n    metersPerUnit = 1\n    upAxis = "Y"\n)\n\n';
   s+='def Xform "Root" (\n    prepend apiSchemas = ["Preliminary_AnchoringAPI"]\n)\n{\n';
@@ -478,7 +523,8 @@ function buildUSDA(){
   POS.forEach((p,idx)=>{
     const pos=isoToUsd(p,R);
     let c=[0.55,0.6,0.66];
-    if(levels[idx]!==null) c=ramp((levels[idx]-lo)/span);
+    const vv=val(idx);
+    if(vv!==null) c=ramp((vv-lo)/span);
     s+=`    def Sphere "P${idx+1}"\n    {\n`;
     s+='        float3[] extent = [(-0.03, -0.03, -0.03), (0.03, 0.03, 0.03)]\n';
     s+=`        color3f[] primvars:displayColor = [(${f(c[0])}, ${f(c[1])}, ${f(c[2])})] (interpolation = "constant")\n`;
@@ -540,8 +586,8 @@ function makeUSDZ(usda){
 }
 
 function exportFieldAR(){
-  const measured=levels.filter(v=>v!==null).length;
-  if(measured<3){ alert('Mesure au moins 3 points pour générer le champ en AR.'); return; }
+  let measured=0; for(let i=0;i<10;i++){ if(val(i)!==null) measured++; }
+  if(measured<3){ alert('Il faut au moins 3 points mesurés dans la bande affichée pour générer le champ.'); return; }
   const usda=buildUSDA();
   const usdz=makeUSDZ(usda);
   const blob=new Blob([usdz], {type:'model/vnd.usdz+zip'});
@@ -568,11 +614,11 @@ function exportFieldAR(){
 
 
 // ---------- persistance de session (survit aux allers-retours AR) ----------
-const STORE_KEY='iso3744_mesures_v1';
+const STORE_KEY='iso3744_mesures_v2';
 function saveState(){
   try{
     localStorage.setItem(STORE_KEY, JSON.stringify({
-      levels, current, cam:{theta, phi, rad, spin}
+      levels, current, selBand, dynDb, cam:{theta, phi, rad, spin}
     }));
   }catch(e){}
 }
@@ -581,8 +627,13 @@ function restoreState(){
     const s=JSON.parse(localStorage.getItem(STORE_KEY)||'null');
     if(!s) return;
     if(Array.isArray(s.levels)&&s.levels.length===10){
-      for(let i=0;i<10;i++) levels[i]=s.levels[i];
+      for(let i=0;i<10;i++){
+        const v=s.levels[i];
+        levels[i] = (typeof v==='number') ? {g:v, b:null} : v;
+      }
     }
+    if(typeof s.selBand==='number') selBand=s.selBand;
+    if(typeof s.dynDb==='number') dynDb=s.dynDb;
     if(typeof s.current==='number') current=s.current;
     if(s.cam){
       theta=s.cam.theta??theta; phi=s.cam.phi??phi; rad=s.cam.rad??rad;
@@ -613,13 +664,22 @@ if(arPoints){
 restoreState();
 recolor();
 
-// Bouton bannière AR "Revenir à la mesure" (Quick Look ferme et notifie la page)
-const arPointsLink=document.getElementById('arPoints');
-if(arPointsLink){
-  arPointsLink.addEventListener('message', ev=>{
-    document.getElementById('view').scrollIntoView({behavior:'smooth'});
-  });
+// ---------- controles bande & dynamique ----------
+const bandSel=document.getElementById('bandSel');
+BANDS.forEach((fc,i)=>{
+  const o=document.createElement('option'); o.value=i;
+  o.textContent = fc>=1000 ? (fc/1000).toString().replace('.',',')+' kHz' : fc+' Hz';
+  bandSel.appendChild(o);
+});
+const dynS=document.getElementById('dynSlider'), dynL=document.getElementById('dynLbl');
+function syncControls(){
+  bandSel.value=String(selBand);
+  dynS.value=String(dynDb);
+  dynL.textContent = dynDb>0 ? dynDb+' dB' : 'auto';
 }
+bandSel.onchange=()=>{ selBand=parseInt(bandSel.value); recolor(); syncCurrent(); saveState(); };
+dynS.oninput=()=>{ dynDb=parseInt(dynS.value); dynL.textContent=dynDb>0?dynDb+' dB':'auto'; recolor(); renderTable(); saveState(); };
+syncControls();
 
 renderTable(); syncCurrent();
 </script>
