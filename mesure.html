@@ -530,10 +530,12 @@ function buildUSDA(){
   s+='        token outputs:surface.connect = </Root/FieldMat/PBR.outputs:surface>\n\n';
   s+='        def Shader "PBR"\n        {\n';
   s+='            uniform token info:id = "UsdPreviewSurface"\n';
-  s+='            color3f inputs:diffuseColor.connect = </Root/FieldMat/Tex.outputs:rgb>\n';
+  s+='            color3f inputs:diffuseColor = (0, 0, 0)\n';
+  s+='            color3f inputs:emissiveColor.connect = </Root/FieldMat/Tex.outputs:rgb>\n';
   s+='            float inputs:opacity = 0.4\n';
   s+='            float inputs:roughness = 1\n';
   s+='            float inputs:metallic = 0\n';
+  s+='            float inputs:ior = 1\n';
   s+='            token outputs:surface\n        }\n';
   s+='        def Shader "stReader"\n        {\n';
   s+='            uniform token info:id = "UsdPrimvarReader_float2"\n';
