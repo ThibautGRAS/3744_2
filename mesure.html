@@ -455,12 +455,13 @@ document.getElementById('btnAR').onclick=exportFieldAR;
 
 // --- construit la géométrie hémisphère (mêmes params que le proto validé) ---
 function buildDome(SL, ST, R){
-  const verts=[], faces=[];
+  const verts=[], faces=[], sts=[];
   for(let j=0;j<=ST;j++){
     const th=(Math.PI/2)*j/ST;
     for(let i=0;i<=SL;i++){
       const ph=2*Math.PI*i/SL;
       verts.push([R*Math.cos(th)*Math.cos(ph), R*Math.sin(th), R*Math.cos(th)*Math.sin(ph)]);
+      sts.push([i/SL, j/ST]);
     }
   }
   for(let j=0;j<ST;j++){
@@ -469,27 +470,45 @@ function buildDome(SL, ST, R){
       faces.push([a,b,c],[a,c,d],[c,b,a],[d,c,a]); // double face : visible des deux côtés (Quick Look ne respecte pas doubleSided en transparent)
     }
   }
-  return {verts, faces};
+  return {verts, faces, sts};
 }
 
 function isoToUsd(p,R){ return [p[0]*R, p[2]*R, p[1]*R]; }
 
-function fieldColorsFor(verts){
+
+// peint le champ dans une texture équirectangulaire (u=azimut, v=élévation)
+async function buildFieldTexturePNG(){
   const B=bounds(); if(!B) return null;
   const known=[]; for(let i=0;i<10;i++){const v=val(i); if(v!==null&&isFinite(v)) known.push({v,pos:isoToUsd(POS[i],1.0)});}
-  if(known.length===0) return null;
-  const lo=B.lo, span=B.span;
-  return verts.map(v=>{
-    let num=0,den=0,exact=null;
-    for(const o of known){
-      const dx=v[0]-o.pos[0], dy=v[1]-o.pos[1], dz=v[2]-o.pos[2];
-      const d2=dx*dx+dy*dy+dz*dz;
-      if(d2<1e-5){exact=o.v;break;}
-      const w=1/(d2*d2); num+=w*o.v; den+=w;
+  if(known.length<3) return null;
+  const W=512, H=256;
+  const cv=document.createElement('canvas'); cv.width=W; cv.height=H;
+  const ctx=cv.getContext('2d');
+  const img=ctx.createImageData(W,H);
+  for(let y=0;y<H;y++){
+    const vcoord=1-(y+0.5)/H;
+    const th=vcoord*Math.PI/2;
+    const ct=Math.cos(th), st=Math.sin(th);
+    for(let x=0;x<W;x++){
+      const u=(x+0.5)/W, ph=2*Math.PI*u;
+      const px=ct*Math.cos(ph), py=st, pz=ct*Math.sin(ph);
+      let num=0, den=0, exact=null;
+      for(const o of known){
+        const dx=px-o.pos[0], dy=py-o.pos[1], dz=pz-o.pos[2];
+        const d2=dx*dx+dy*dy+dz*dz;
+        if(d2<1e-6){ exact=o.v; break; }
+        const w=1/(d2*d2); num+=w*o.v; den+=w;
+      }
+      const vv = exact!==null?exact:num/den;
+      const c = ramp((vv-B.lo)/B.span);
+      const k=(y*W+x)*4;
+      img.data[k]=Math.round(c[0]*255); img.data[k+1]=Math.round(c[1]*255);
+      img.data[k+2]=Math.round(c[2]*255); img.data[k+3]=255;
     }
-    const val = exact!==null?exact:num/den;
-    return ramp((val-lo)/span);
-  });
+  }
+  ctx.putImageData(img,0,0);
+  const blob=await new Promise(r=>cv.toBlob(r,'image/png'));
+  return new Uint8Array(await blob.arrayBuffer());
 }
 
 function f(n){ // format float compact comme USD
@@ -499,29 +518,34 @@ function f(n){ // format float compact comme USD
 
 function buildUSDA(){
   const R=1.0;
-  const {verts,faces}=buildDome(48,24,R);
-  const colors=fieldColorsFor(verts);
-  if(!colors) return null;
+  const {verts,faces,sts}=buildDome(48,24,R);
   const Bb=bounds(); const lo=Bb?Bb.lo:0, span=Bb?Bb.span:1;
 
   let s='#usda 1.0\n(\n    defaultPrim = "Root"\n    metersPerUnit = 1\n    upAxis = "Y"\n)\n\n';
   s+='def Xform "Root" (\n    prepend apiSchemas = ["Preliminary_AnchoringAPI"]\n)\n{\n';
   s+='    token preliminary:anchoring:type = "plane"\n    token preliminary:planeAnchoring:alignment = "horizontal"\n\n';
   // Mesh
-  // matériau mat semi-transparent lisant les couleurs de sommets
+  // matériau mat semi-transparent texturé (le champ est peint dans field.png)
   s+='    def Material "FieldMat"\n    {\n';
   s+='        token outputs:surface.connect = </Root/FieldMat/PBR.outputs:surface>\n\n';
   s+='        def Shader "PBR"\n        {\n';
   s+='            uniform token info:id = "UsdPreviewSurface"\n';
-  s+='            color3f inputs:diffuseColor.connect = </Root/FieldMat/cReader.outputs:result>\n';
+  s+='            color3f inputs:diffuseColor.connect = </Root/FieldMat/Tex.outputs:rgb>\n';
   s+='            float inputs:opacity = 0.4\n';
   s+='            float inputs:roughness = 1\n';
   s+='            float inputs:metallic = 0\n';
   s+='            token outputs:surface\n        }\n';
-  s+='        def Shader "cReader"\n        {\n';
-  s+='            uniform token info:id = "UsdPrimvarReader_float3"\n';
-  s+='            token inputs:varname = "displayColor"\n';
-  s+='            float3 outputs:result\n        }\n    }\n\n';
+  s+='        def Shader "stReader"\n        {\n';
+  s+='            uniform token info:id = "UsdPrimvarReader_float2"\n';
+  s+='            token inputs:varname = "st"\n';
+  s+='            float2 outputs:result\n        }\n';
+  s+='        def Shader "Tex"\n        {\n';
+  s+='            uniform token info:id = "UsdUVTexture"\n';
+  s+='            asset inputs:file = @field.png@\n';
+  s+='            float2 inputs:st.connect = </Root/FieldMat/stReader.outputs:result>\n';
+  s+='            token inputs:wrapS = "repeat"\n';
+  s+='            token inputs:wrapT = "clamp"\n';
+  s+='            float3 outputs:rgb\n        }\n    }\n\n';
   s+='    def Mesh "Field" (\n        prepend apiSchemas = ["MaterialBindingAPI"]\n    )\n    {\n';
   s+='        rel material:binding = </Root/FieldMat>\n';
   s+='        uniform bool doubleSided = 1\n';
@@ -529,7 +553,7 @@ function buildUSDA(){
   s+='        int[] faceVertexCounts = ['+faces.map(()=>3).join(', ')+']\n';
   s+='        int[] faceVertexIndices = ['+faces.flat().join(', ')+']\n';
   s+='        point3f[] points = ['+verts.map(v=>`(${f(v[0])}, ${f(v[1])}, ${f(v[2])})`).join(', ')+']\n';
-  s+='        color3f[] primvars:displayColor = ['+colors.map(c=>`(${f(c[0])}, ${f(c[1])}, ${f(c[2])})`).join(', ')+'] (\n            interpolation = "vertex"\n        )\n';
+  s+='        texCoord2f[] primvars:st = ['+sts.map(u=>`(${f(u[0])}, ${f(u[1])})`).join(', ')+'] (\n            interpolation = "vertex"\n        )\n';
   s+='        uniform token subdivisionScheme = "none"\n    }\n\n';
   // Centre
   s+='    def Cylinder "Center"\n    {\n        uniform token axis = "Y"\n        double height = 0.004\n        double radius = 0.05\n        color3f[] primvars:displayColor = [(0.937, 0.2, 0.275)] (interpolation = "constant")\n        double3 xformOp:translate = (0, 0.002, 0)\n        uniform token[] xformOpOrder = ["xformOp:translate"]\n    }\n\n';
@@ -557,53 +581,52 @@ function crc32(bytes){
   for(let i=0;i<bytes.length;i++) crc=crc32.t[(crc^bytes[i])&0xFF]^(crc>>>8);
   return (crc^0xFFFFFFFF)>>>0;
 }
-function makeUSDZ(usda){
-  const enc=new TextEncoder();
-  const name='scene.usda';
-  const nameB=enc.encode(name);
-  const data=enc.encode(usda);
-  const crc=crc32(data);
-  // local file header
-  const parts=[];
+function makeUSDZ(files){ // files = [{name, data:Uint8Array}]
   function u16(v){return [v&255,(v>>8)&255];}
   function u32(v){return [v&255,(v>>8)&255,(v>>16)&255,(v>>24)&255];}
-  // On calcule le padding pour aligner le DÉBUT des données sur 64 octets (requis USDZ)
-  const localHeaderLen=30+nameB.length;
-  const pad=(64-(localHeaderLen%64))%64;
-  const extra=new Uint8Array(pad); // extra field sert de padding
-  const lfh=[]
-    .concat(u32(0x04034b50), u16(20), u16(0), u16(0), u16(0), u16(0),
-            u32(crc), u32(data.length), u32(data.length),
-            u16(nameB.length), u16(pad));
-  const lfhArr=new Uint8Array(lfh);
-  const localOffset=0;
-  parts.push(lfhArr, nameB, extra, data);
-  // central directory
-  const cdh=[]
-    .concat(u32(0x02014b50), u16(20), u16(20), u16(0), u16(0), u16(0), u16(0),
-            u32(crc), u32(data.length), u32(data.length),
-            u16(nameB.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(localOffset));
-  const cdhArr=new Uint8Array(cdh);
-  const cdStart=lfhArr.length+nameB.length+extra.length+data.length;
-  const cdParts=[cdhArr, nameB];
-  const cdLen=cdhArr.length+nameB.length;
-  // EOCD
-  const eocd=[]
-    .concat(u32(0x06054b50), u16(0), u16(0), u16(1), u16(1),
-            u32(cdLen), u32(cdStart), u16(0));
-  const eocdArr=new Uint8Array(eocd);
-  // concat
-  let total=0; [...parts, ...cdParts, eocdArr].forEach(a=>total+=a.length);
+  const enc=new TextEncoder();
+  const chunks=[]; const centrals=[]; let offset=0;
+  for(const file of files){
+    const nameB=enc.encode(file.name);
+    const data=file.data;
+    const crc=crc32(data);
+    const headerLen=30+nameB.length;
+    const pad=(64-((offset+headerLen)%64))%64;
+    const lfh=new Uint8Array([].concat(
+      u32(0x04034b50), u16(20), u16(0), u16(0), u16(0), u16(0),
+      u32(crc), u32(data.length), u32(data.length),
+      u16(nameB.length), u16(pad)));
+    centrals.push({nameB, crc, size:data.length, offset});
+    chunks.push(lfh, nameB, new Uint8Array(pad), data);
+    offset += headerLen + pad + data.length;
+  }
+  const cdStart=offset; let cdLen=0;
+  for(const c of centrals){
+    const cdh=new Uint8Array([].concat(
+      u32(0x02014b50), u16(20), u16(20), u16(0), u16(0), u16(0), u16(0),
+      u32(c.crc), u32(c.size), u32(c.size),
+      u16(c.nameB.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(c.offset)));
+    chunks.push(cdh, c.nameB);
+    cdLen += cdh.length + c.nameB.length;
+  }
+  const eocd=new Uint8Array([].concat(
+    u32(0x06054b50), u16(0), u16(0), u16(centrals.length), u16(centrals.length),
+    u32(cdLen), u32(cdStart), u16(0)));
+  chunks.push(eocd);
+  let total=0; chunks.forEach(a=>total+=a.length);
   const out=new Uint8Array(total); let off=0;
-  [...parts, ...cdParts, eocdArr].forEach(a=>{out.set(a,off); off+=a.length;});
+  chunks.forEach(a=>{out.set(a,off); off+=a.length;});
   return out;
 }
 
-function exportFieldAR(){
+async function exportFieldAR(){
   let measured=0; for(let i=0;i<10;i++){ if(val(i)!==null) measured++; }
   if(measured<3){ alert('Il faut au moins 3 points mesurés dans la bande affichée pour générer le champ.'); return; }
+  const png=await buildFieldTexturePNG();
+  if(!png){ alert('Impossible de générer la texture du champ.'); return; }
   const usda=buildUSDA();
-  const usdz=makeUSDZ(usda);
+  const enc=new TextEncoder();
+  const usdz=makeUSDZ([{name:'scene.usda', data:enc.encode(usda)},{name:'field.png', data:png}]);
   const blob=new Blob([usdz], {type:'model/vnd.usdz+zip'});
   const url=URL.createObjectURL(blob);
   // Tentative 1 : lien rel="ar" avec img enfant -> AR Quick Look direct
